@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>בדיקת דגם רכב - צ'קליסט</title>
+  <style>
+    :root { font-family: Arial, sans-serif; color-scheme: light; }
+    body { margin: 0; background: #f4f6f8; color: #111; }
+    .container { max-width: 980px; margin: 0 auto; padding: 16px; }
+    .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    h1,h2,h3 { margin-top: 0; }
+    .grid { display: grid; gap: 10px; }
+    .grid-2 { grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); }
+    label { display:block; font-size: .9rem; margin-bottom: 4px; color:#333; }
+    input[type="text"], textarea { width:100%; padding:10px; border:1px solid #ccc; border-radius: 8px; font-size: 1rem; }
+    textarea { min-height:120px; }
+    .actions { display:flex; flex-wrap:wrap; gap:8px; }
+    button { padding:10px 14px; border:none; border-radius:8px; background:#0057b8; color:#fff; font-weight:700; cursor:pointer; }
+    button.secondary { background:#444; }
+    button.warn { background:#8a5a00; }
+    .check-section { border:1px solid #e3e3e3; border-radius:10px; padding:12px; margin-bottom:10px; }
+    .check-item { display:flex; justify-content:space-between; gap:10px; border-bottom:1px dashed #ececec; padding:8px 0; }
+    .check-item:last-child { border-bottom:none; }
+    .thumbs { display:grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); gap:8px; }
+    .thumbs img { width:100%; height:120px; object-fit:cover; border-radius:8px; border:1px solid #ddd; }
+    .muted { color:#666; font-size:.9rem; }
+    #report { background:#fff; padding:16px; border-radius:12px; }
+    .hidden { display:none; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.min.mjs" type="module"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>אפליקציית בדיקת דגם רכב</h1>
+
+    <section class="card">
+      <h2>1) פרטי דגם ידניים</h2>
+      <div class="grid grid-2">
+        <div><label>שם הדגם</label><input id="modelName" type="text" /></div>
+        <div><label>מספר שלדה</label><input id="vin" type="text" /></div>
+        <div><label>רמת גימור</label><input id="trim" type="text" /></div>
+        <div><label>מספר דלתות</label><input id="doors" type="text" /></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2) העלאת מפרט PDF והמרה ל-Markdown</h2>
+      <input id="specPdf" type="file" accept="application/pdf" />
+      <p class="muted">המערכת תחלץ טקסט ותיצור Markdown בסיסי. ניתן לערוך ידנית לפני יצירת צ'קליסט.</p>
+      <label for="markdownOut">Markdown מהמפרט</label>
+      <textarea id="markdownOut" placeholder="כאן יופיע Markdown מהמפרט..."></textarea>
+      <div class="actions">
+        <button id="convertBtn">המרה מ-PDF ל-MD</button>
+        <button id="buildChecklistBtn" class="secondary">בניית צ'קליסט מה-MD</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3) צ'קליסט אבזור ובטיחות</h2>
+      <div id="checklistRoot" class="muted">טרם נבנה צ'קליסט.</div>
+    </section>
+
+    <section class="card">
+      <h2>4) העלאת תמונות הדגם הנבדק</h2>
+      <input id="photos" type="file" accept="image/*" multiple />
+      <div id="photosPreview" class="thumbs"></div>
+    </section>
+
+    <section class="card">
+      <h2>5) דוח סופי</h2>
+      <div class="actions">
+        <button id="refreshReportBtn">רענון תצוגת דוח</button>
+        <button id="pdfBtn">ייצוא ל-PDF</button>
+        <button id="imgBtn" class="secondary">ייצוא לתמונה (PNG)</button>
+        <button id="newReportBtn" class="warn">דוח חדש</button>
+      </div>
+      <div id="report" class="hidden"></div>
+    </section>
+  </div>
+
+<script type="module">
+  const pdfjsLib = globalThis.pdfjsLib;
+  if (pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.worker.min.mjs';
+
+  const state = { checklist: [], photos: [] };
+  const q = (id) => document.getElementById(id);
+
+  q('convertBtn').addEventListener('click', async () => {
+    const file = q('specPdf').files?.[0];
+    if (!file) return alert('נא לבחור קובץ PDF');
+    if (!pdfjsLib) return alert('PDF.js לא נטען. ודאו חיבור אינטרנט.');
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    let text = '';
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      text += content.items.map(i => i.str).join(' ') + '\n';
+    }
+    q('markdownOut').value = toMarkdown(text);
+  });
+
+  q('buildChecklistBtn').addEventListener('click', () => {
+    state.checklist = parseChecklistFromMarkdown(q('markdownOut').value);
+    renderChecklist();
+  });
+
+  q('photos').addEventListener('change', async () => {
+    state.photos = [];
+    for (const f of q('photos').files) {
+      const dataUrl = await fileToDataUrl(f);
+      state.photos.push(dataUrl);
+    }
+    renderPhotos();
+  });
+
+  q('refreshReportBtn').addEventListener('click', buildReport);
+  q('pdfBtn').addEventListener('click', async () => exportReport('pdf'));
+  q('imgBtn').addEventListener('click', async () => exportReport('png'));
+  q('newReportBtn').addEventListener('click', newReport);
+
+  function toMarkdown(raw) {
+    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+    const normalized = lines.map(l => {
+      if (/אבזור|ציוד/.test(l)) return '## אבזור';
+      if (/בטיחות/.test(l)) return '## בטיחות';
+      return `- ${l.replace(/^[-•]\s*/, '')}`;
+    });
+    return ['# מפרט שהומר מ-PDF', ...normalized].join('\n');
+  }
+
+  function parseChecklistFromMarkdown(md) {
+    const result = [];
+    let current = null;
+    md.split('\n').forEach(line => {
+      const h = line.match(/^##\s+(.+)/);
+      const item = line.match(/^[-*]\s+(.+)/);
+      if (h) {
+        current = { section: h[1].trim(), items: [] };
+        result.push(current);
+      } else if (item && current && item[1].length > 2) {
+        current.items.push({ text: item[1].trim(), checked: false });
+      }
+    });
+    return result;
+  }
+
+  function renderChecklist() {
+    const root = q('checklistRoot');
+    root.innerHTML = '';
+    if (!state.checklist.length) { root.textContent = 'לא נמצאו סעיפים.'; return; }
+    state.checklist.forEach((s, si) => {
+      const box = document.createElement('div'); box.className = 'check-section';
+      box.innerHTML = `<h3>${s.section}</h3>`;
+      s.items.forEach((it, ii) => {
+        const row = document.createElement('div'); row.className = 'check-item';
+        const cbId = `cb-${si}-${ii}`;
+        row.innerHTML = `<label for="${cbId}">${it.text}</label><input id="${cbId}" type="checkbox" />`;
+        row.querySelector('input').addEventListener('change', (e) => it.checked = e.target.checked);
+        box.appendChild(row);
+      });
+      root.appendChild(box);
+    });
+  }
+
+  function renderPhotos() {
+    const p = q('photosPreview'); p.innerHTML = '';
+    state.photos.forEach(src => {
+      const img = document.createElement('img'); img.src = src; p.appendChild(img);
+    });
+  }
+
+  function buildReport() {
+    const report = q('report');
+    const model = q('modelName').value || '-';
+    const vin = q('vin').value || '-';
+    const trim = q('trim').value || '-';
+    const doors = q('doors').value || '-';
+
+    const checklistHtml = state.checklist.map(s => `
+      <h3>${s.section}</h3>
+      <ul>${s.items.map(i => `<li>${i.checked ? '✅' : '⬜'} ${i.text}</li>`).join('')}</ul>
+    `).join('');
+    const imgs = state.photos.map(s => `<img src="${s}" style="width:160px;height:120px;object-fit:cover;margin:4px;border-radius:6px"/>`).join('');
+
+    report.innerHTML = `
+      <h2>דוח בדיקת דגם</h2>
+      <p><b>שם הדגם:</b> ${model}</p>
+      <p><b>מספר שלדה:</b> ${vin}</p>
+      <p><b>רמת גימור:</b> ${trim}</p>
+      <p><b>מספר דלתות:</b> ${doors}</p>
+      <hr />
+      ${checklistHtml || '<p>אין צ\'קליסט.</p>'}
+      <hr />
+      <h3>תמונות</h3>
+      <div>${imgs || '<p>לא הועלו תמונות.</p>'}</div>
+      <p class="muted">נוצר בתאריך: ${new Date().toLocaleString('he-IL')}</p>
+    `;
+    report.classList.remove('hidden');
+  }
+
+  async function exportReport(type) {
+    buildReport();
+    const report = q('report');
+    const canvas = await html2canvas(report, { scale: 2, useCORS: true });
+    if (type === 'png') {
+      const a = document.createElement('a');
+      a.download = 'car-inspection-report.png';
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+      return;
+    }
+    const { jsPDF } = window.jspdf;
+    const img = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const w = 190;
+    const h = canvas.height * w / canvas.width;
+    pdf.addImage(img, 'PNG', 10, 10, w, h);
+    pdf.save('car-inspection-report.pdf');
+  }
+
+  function newReport() {
+    ['modelName','vin','trim','doors','markdownOut'].forEach(id => q(id).value = '');
+    q('specPdf').value = '';
+    q('photos').value = '';
+    state.checklist = [];
+    state.photos = [];
+    q('checklistRoot').textContent = 'טרם נבנה צ\'קליסט.';
+    q('photosPreview').innerHTML = '';
+    q('report').innerHTML = '';
+    q('report').classList.add('hidden');
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+</script>
+</body>
+</html>
