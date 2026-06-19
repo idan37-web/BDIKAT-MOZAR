@@ -2,8 +2,10 @@
 // textarea overlay and Original/Editable/Reconstructed/Compare view modes.
 import React from 'react';
 import type { DocumentIR, TextBlockIR, ImageBlockIR, BlockIR } from '../types/catalog';
+import type { TemplateSpec } from '../templates/templateSpec';
 import { ImportScreen } from './ImportScreen';
 import { TemplateScreen } from './TemplateScreen';
+import { GenerateScreen } from './GenerateScreen';
 import { PageView, type ViewMode } from './PageView';
 import { brandFont, ensureFontFace, FALLBACK_HEBREW } from './brandFont';
 
@@ -16,7 +18,8 @@ const MODES: { id: ViewMode; label: string }[] = [
 
 export function App() {
   const [doc, setDoc] = React.useState<DocumentIR | null>(null);
-  const [learning, setLearning] = React.useState(false);
+  const [screen, setScreen] = React.useState<'import' | 'learn' | 'generate'>('import');
+  const [genSpec, setGenSpec] = React.useState<TemplateSpec | null>(null);
   const [cur, setCur] = React.useState(0);
   const [mode, setMode] = React.useState<ViewMode>('editable');
   const [sel, setSel] = React.useState<string | null>(null);
@@ -25,8 +28,11 @@ export function App() {
   const bf = doc ? brandFont(doc.brand || '') : null;
   React.useEffect(() => { if (bf) ensureFontFace(bf); }, [bf]);
 
-  if (learning) return <TemplateScreen onBack={() => setLearning(false)} />;
-  if (!doc) return <ImportScreen onImported={(d) => { setDoc(d); setCur(0); setSel(null); setEditing(null); }} onLearnTemplate={() => setLearning(true)} />;
+  const openDoc = (d: DocumentIR) => { setDoc(d); setScreen('import'); setCur(0); setSel(null); setEditing(null); };
+  const goGenerate = (spec?: TemplateSpec) => { setGenSpec(spec || null); setScreen('generate'); };
+  if (!doc && screen === 'learn') return <TemplateScreen onBack={() => setScreen('import')} onGenerate={goGenerate} />;
+  if (!doc && screen === 'generate') return <GenerateScreen initialSpec={genSpec} onCreate={openDoc} onBack={() => setScreen('import')} />;
+  if (!doc) return <ImportScreen onImported={openDoc} onLearnTemplate={() => setScreen('learn')} onGenerate={() => goGenerate()} />;
 
   const page = doc.pages[cur];
   const scale = Math.min(1, 880 / page.width);

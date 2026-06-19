@@ -21,7 +21,7 @@ const ROLE_HE: Record<string, string> = {
 
 type Phase = 'pick' | 'learning' | 'review';
 
-export function TemplateScreen({ onBack }: { onBack: () => void }) {
+export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onGenerate?: (spec: TemplateSpec) => void }) {
   const [phase, setPhase] = React.useState<Phase>('pick');
   const [over, setOver] = React.useState(false);
   const [log, setLog] = React.useState<string[]>([]);
@@ -147,6 +147,7 @@ export function TemplateScreen({ onBack }: { onBack: () => void }) {
         <button className="btn btn-sm" onClick={doSave} style={{ background: saved ? 'var(--ok, #0a7d3b)' : 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>
           {saved ? '✓ נשמר' : 'שמור תבנית'}
         </button>
+        {onGenerate && <button className="btn btn-sm" onClick={() => { saveTemplateLocal(tpl); onGenerate(tpl); }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>צור קטלוג ←</button>}
         <button className="btn btn-ghost btn-sm" onClick={onBack}>יציאה</button>
       </header>
 

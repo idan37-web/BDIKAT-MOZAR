@@ -4,7 +4,7 @@ import React from 'react';
 import type { DocumentIR } from '../types/catalog';
 import { importPdf } from '../pdf/importPdf';
 
-export function ImportScreen({ onImported, onLearnTemplate }: { onImported: (doc: DocumentIR) => void; onLearnTemplate?: () => void }) {
+export function ImportScreen({ onImported, onLearnTemplate, onGenerate }: { onImported: (doc: DocumentIR) => void; onLearnTemplate?: () => void; onGenerate?: () => void }) {
   const [busy, setBusy] = React.useState(false);
   const [over, setOver] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
@@ -28,6 +28,7 @@ export function ImportScreen({ onImported, onLearnTemplate }: { onImported: (doc
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <h1 style={{ fontFamily: 'var(--display)', fontSize: 26, fontWeight: 800 }}>ייבוא מפרט PDF</h1>
         <div style={{ flex: 1 }} />
+        {onGenerate && <button className="btn btn-ghost btn-sm" onClick={onGenerate}>צור קטלוג ←</button>}
         {onLearnTemplate && <button className="btn btn-ghost btn-sm" onClick={onLearnTemplate}>למידת תבנית ←</button>}
       </div>
       <p style={{ color: 'var(--ink-2)', marginTop: 4 }}>גרור קובץ PDF אמיתי — המערכת מחלצת ממנו טקסט אמיתי (בר-בחירה) ומבנה עמודים.</p>
