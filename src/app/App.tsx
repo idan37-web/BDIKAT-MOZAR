@@ -7,7 +7,8 @@ import { ImportScreen } from './ImportScreen';
 import { TemplateScreen } from './TemplateScreen';
 import { GenerateScreen } from './GenerateScreen';
 import { PageView, type ViewMode } from './PageView';
-import { brandFont, ensureFontFace, FALLBACK_HEBREW } from './brandFont';
+import { brandFont, ensureFontFace, FALLBACK_HEBREW, loadExportFont } from './brandFont';
+import { exportPdf } from '../pdf/exportPdf';
 
 const MODES: { id: ViewMode; label: string }[] = [
   { id: 'original', label: 'מקור' },
@@ -24,6 +25,28 @@ export function App() {
   const [mode, setMode] = React.useState<ViewMode>('editable');
   const [sel, setSel] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState<string | null>(null);
+  const [exporting, setExporting] = React.useState(false);
+  const [exportErr, setExportErr] = React.useState<string | null>(null);
+
+  async function handleExport() {
+    if (!doc || exporting) return;
+    setExporting(true); setExportErr(null);
+    try {
+      const fontBytes = await loadExportFont(doc.brand || '');
+      const bytes = await exportPdf(doc, fontBytes);
+      const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(doc.sourcePdfName || 'catalog').replace(/\.pdf$/i, '')}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      setExportErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const bf = doc ? brandFont(doc.brand || '') : null;
   React.useEffect(() => { if (bf) ensureFontFace(bf); }, [bf]);
@@ -62,6 +85,11 @@ export function App() {
           ))}
         </div>
         <div style={{ flex: 1 }} />
+        {exportErr && <span style={{ color: 'var(--danger)', fontSize: 12 }} title={exportErr}>שגיאת ייצוא</span>}
+        <button className="btn btn-sm" onClick={handleExport} disabled={exporting}
+          style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', opacity: exporting ? 0.6 : 1 }}>
+          {exporting ? 'מייצא…' : 'ייצוא PDF'}
+        </button>
         <button className="btn btn-ghost btn-sm" onClick={() => setDoc(null)}>ייבוא אחר</button>
       </header>
 

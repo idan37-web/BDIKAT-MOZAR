@@ -8,7 +8,11 @@
 We executed the directive in order. **All stages 0–7 are done and verified.** The full pipeline works:
 **learn a TemplateSpec from same-family PDFs → generate a catalog DocumentIR from slot bindings → edit it in
 the IR editor → export a real vector Hebrew PDF**, alongside the original **import an external PDF → IR → edit →
-export** path. No simulated steps anywhere. Next work is hardening/polish (see "Open follow-ups").
+export** path. No simulated steps anywhere.
+
+**Now in: Phase "usable on a real catalog"** (`docs/PHASE-usable-on-real-catalog.md`) — hardening, not breadth.
+Milestone A ✅ (end-to-end on the real Peugeot family, image export, export wired into the editor). Next:
+B auto-fit, C IndexedDB persistence, D structured-data ingestion. See "Phase milestones" below.
 
 The **new app** lives in `src/` (Vite + React + TS). The old design prototype is reference-only at
 `legacy.html` / `src/legacy/`. Do NOT build on the prototype (raster/overlay) — build on the IR.
@@ -147,11 +151,26 @@ add it in `src/app/brandFont.ts` (and embed in export).
   → **real vector export** (`%PDF`, ~274KB). Hebrew order on the generated cover was pixel-confirmed with PyMuPDF
   ("פיג׳ו 408 · 130 כ״ס" renders RTL with digits un-reversed).
 
-## Open follow-ups (not blockers)
+## Phase "usable on a real catalog" — milestones
+Spec: `docs/PHASE-usable-on-real-catalog.md`. Hardening only — NO new slot types/templates/effects/print.
+- ✅ **A — end-to-end on ONE real family.** Fixed the two real-data breaks: (1) **vector export now embeds
+  images** (`exportPdf.ts`: PNG via `embedPng`, JPEG via `embedJpg`, drawn under text in zIndex order; cover/
+  contain/fill with a pdf-lib clip rect for cover; full source bytes, **no downsampling**; unembeddable/unbound
+  → neutral frame rect). (2) **Export is wired into the editor** — `App` "ייצוא PDF" button → `loadExportFont`
+  (`brandFont.ts`, brand OTF or Peugeot Hebrew as a generic embed) → `exportPdf` → real file download. Confirmed
+  no simulated progress survives in the real app (only `legacy/` has fake `setTimeout` bars). Gate:
+  `npm run verify:milestone-a` (learn 3008+5008 → generate "פיג׳ו 408" → stream a real image asset → edit a
+  heading → export). Pixel-confirmed with PyMuPDF: cover shows the hero photo + logo + "פיג׳ו 408 — חוויה חדשה"
+  in correct RTL order, 2 images embedded, text selectable/vector.
+- 🔜 **B — generation-time auto-fit** (text shrink→wrap→grow→flag; tables shrink→continue→flag). 🔜 **C — IndexedDB
+  persistence** (templates + projects, autosave). 🔜 **D — structured-data ingestion** (md spec / Excel → slots, manual fallback).
+
+## Open follow-ups (not blockers; some folded into the phase)
 - Text colour refinement (op-list) → real `tokens.accent` per model (currently placeholder `#111418`).
-- Generated image slots are placeholders until bound; consider learning real hero-image bboxes from the
-  browser import (image blocks) so generated covers carry a frame even before the user uploads.
-- Spec tables generate as one text block (per directive); a real `TableBlockIR` path could come from source Excel.
+- **Generated interior pages are text-on-white**: colored brand panels/backgrounds are NOT in the IR
+  (extraction is text+images only), so only the cover (with a bound hero) looks "designed". Out of scope for
+  this phase (no new breadth); would need shape/background extraction.
+- Spec tables generate as one text block (per directive); a real `TableBlockIR` path could come from source Excel (Milestone D).
 
 ## Domain facts to reuse (measured; see brief for full table)
 - 6 brands: Peugeot · Citroën · Opel · DS · IM · MG. Multiple templates per brand (NOT one).

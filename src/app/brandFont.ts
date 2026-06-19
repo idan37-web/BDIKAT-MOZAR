@@ -39,3 +39,16 @@ export function ensureFontFace(bf: BrandFont): void {
 }
 
 export const FALLBACK_HEBREW = "'Assistant','Heebo',system-ui,sans-serif";
+
+/**
+ * Load the actual font bytes to EMBED on export. Brand font when available, else the
+ * Peugeot Hebrew OTF as a generic Hebrew-capable embed (Citroën font was never supplied;
+ * the editor still shows the system stack, but a PDF needs real embedded glyphs). Works
+ * with the bundled `?url` asset in dev, build, and the single-file (data-URI) build.
+ */
+export async function loadExportFont(brand: string): Promise<Uint8Array> {
+  const bf = brandFont(brand);
+  const url = bf?.regularUrl || peugeotRegular;
+  const res = await fetch(url);
+  return new Uint8Array(await res.arrayBuffer());
+}
