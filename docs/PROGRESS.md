@@ -165,12 +165,26 @@ Spec: `docs/PHASE-usable-on-real-catalog.md`. Hardening only — NO new slot typ
 - 🔜 **B — generation-time auto-fit** (text shrink→wrap→grow→flag; tables shrink→continue→flag). 🔜 **C — IndexedDB
   persistence** (templates + projects, autosave). 🔜 **D — structured-data ingestion** (md spec / Excel → slots, manual fallback).
 
+## Design-fidelity pass (user-requested; "make it look like a catalog")
+After Milestone A the user judged generated pages too plain (missing panels, broken tables). Fixed:
+- **Vector shapes (panels / accent strips / colour swatches) now extracted** in the SAME op-list walk
+  (`extractImages.ts` → `walkPage` returns `{images, shapes}`; `ShapeBlockIR` in `catalog.ts`). Fill colours come
+  straight from the fill ops (setFillRGBColor/Gray/CMYK) — **no raster sampling, so shapes extract headlessly**.
+  Rendered in `PageView` (under images/text) and drawn in `exportPdf` (`drawRectangle`, z-ordered).
+- **Carried through learn → generate.** Shape regions become `background` slots; cross-doc fill comparison marks a
+  **per-model accent strip dynamic** and shared panels fixed. `generateCatalog` emits `ShapeBlockIR`. Gate: `npm run verify:shapes`.
+- **Tables no longer collapse.** Reverted the Stage-6 dense-page consolidation: every positioned text run stays its
+  own slot, so generation reproduces the spec/safety grid (cross-doc → fixed column labels + dynamic values) instead
+  of one blob. Pixel-confirmed: generated 3008→408 spec page renders the full two-column table over the gray panels.
+
 ## Open follow-ups (not blockers; some folded into the phase)
-- Text colour refinement (op-list) → real `tokens.accent` per model (currently placeholder `#111418`).
-- **Generated interior pages are text-on-white**: colored brand panels/backgrounds are NOT in the IR
-  (extraction is text+images only), so only the cover (with a bound hero) looks "designed". Out of scope for
-  this phase (no new breadth); would need shape/background extraction.
-- Spec tables generate as one text block (per directive); a real `TableBlockIR` path could come from source Excel (Milestone D).
+- Text colour refinement (op-list) → real `tokens.accent` per model (text colour still placeholder `#111418`;
+  shape/panel colours ARE now real).
+- **Interior generated pages still lack PHOTOS in a headless learn** (image extraction needs the browser canvas).
+  In the actual app (browser learn), interior image slots are learned and generated pages carry the source photos.
+  A headless image path (napi-canvas) would let the gates show photos too.
+- Spec tables are positioned cells (grid reproduced visually); a real `TableBlockIR` + gridlines could come from
+  source Excel (Milestone D).
 
 ## Domain facts to reuse (measured; see brief for full table)
 - 6 brands: Peugeot · Citroën · Opel · DS · IM · MG. Multiple templates per brand (NOT one).

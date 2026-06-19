@@ -1,9 +1,9 @@
 // Stage 2 (C.4): turn an uploaded PDF (ArrayBuffer) into a DocumentIR using pdf.js.
 // The imported IR — never IMPORT3008/IMPORTC3 — is the source of truth after upload.
-import type { DocumentIR, PageIR, ImageBlockIR } from '../types/catalog';
+import type { DocumentIR, PageIR, ImageBlockIR, ShapeBlockIR } from '../types/catalog';
 import { extractTextBlocks } from './extractLayout';
 import { renderPageCanvas, cropCanvasErasingText } from './renderPage';
-import { walkPageImages, resolveImage } from './extractImages';
+import { walkPage, resolveImage, type ShapeOp } from './extractImages';
 
 let workerConfigured = false;
 
@@ -44,6 +44,17 @@ export async function importPdf(
     // text sits in paint order ABOVE images (captions over photos)
     textBlocks.forEach((b, i) => { b.zIndex = 1_000_000 + i; });
 
+    // SINGLE op-list walk → images + filled shapes in paint order. Shapes need NO canvas,
+    // so design panels/strips are captured even in a headless (renderPreviews:false) import.
+    const { images: imageOps, shapes: shapeOps } = await walkPage(page, (pdfjs as any).OPS, vp.height);
+
+    const shapeBlocks: ShapeBlockIR[] = dedupeShapes(shapeOps).map((s, i) => ({
+      id: `${id}_sh${i}`, type: 'shape', x: s.bbox.x, y: s.bbox.y, width: s.bbox.width, height: s.bbox.height,
+      rotation: 0, zIndex: s.opIndex, source: 'original',
+      originalBBox: { x: s.bbox.x, y: s.bbox.y, width: s.bbox.width, height: s.bbox.height },
+      fill: s.fill,
+    }));
+
     let previewImage: string | undefined;
     const imageBlocks: ImageBlockIR[] = [];
     if (opts.renderPreviews && typeof window !== 'undefined') {
@@ -51,10 +62,8 @@ export async function importPdf(
       try {
         const rendered = await renderPageCanvas(page, opts.previewScale ?? 2);
         previewImage = rendered.dataUrl;
-        // SINGLE op-list walk → image ops in paint order; resolve a CLEAN source each.
-        const ops = await walkPageImages(page, (pdfjs as any).OPS, vp.height);
-        for (let i = 0; i < ops.length; i++) {
-          const op = ops[i];
+        for (let i = 0; i < imageOps.length; i++) {
+          const op = imageOps[i];
           let src = await resolveImage(page, op, makeCanvas);
           if (!src) {
             // last resort: crop preview but ERASE overlapping text so it can't carry text
@@ -80,11 +89,12 @@ export async function importPdf(
       rotation: vp.rotation || 0,
       originalPdfPageIndex: n - 1,
       previewImage,
-      // images first (under text) for deterministic stacking
-      blocks: [...imageBlocks, ...textBlocks],
+      // paint order: shapes (under) → images → text (on top); each keeps its op-order zIndex
+      blocks: [...shapeBlocks, ...imageBlocks, ...textBlocks],
     });
   }
 
+  // (helper hoisted below)
   const n = sourcePdfName.toLowerCase();
   const brand = /peugeot|208|2008|3008|5008|rifter|boxer/.test(n) ? 'peugeot'
     : /citroen|citro|c3|c4|c5|berlingo|jumpy/.test(n) ? 'citroen' : 'unknown';
@@ -95,4 +105,23 @@ export async function importPdf(
     brand,
     pages,
   };
+}
+
+/** Merge near-duplicate filled rects (same fill + heavy overlap) and cap per-page count. */
+function dedupeShapes(shapes: ShapeOp[]): ShapeOp[] {
+  const out: ShapeOp[] = [];
+  for (const s of shapes) {
+    const dup = out.find((o) => o.fill === s.fill && iou(o.bbox, s.bbox) > 0.85);
+    if (dup) { if (area(s.bbox) > area(dup.bbox)) Object.assign(dup, s); continue; }
+    out.push({ ...s });
+  }
+  // largest first; keep the most prominent panels
+  return out.sort((a, b) => area(b.bbox) - area(a.bbox)).slice(0, 80);
+}
+function area(b: { width: number; height: number }): number { return b.width * b.height; }
+function iou(a: ShapeOp['bbox'], b: ShapeOp['bbox']): number {
+  const ix = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  const inter = ix * iy; const uni = area(a) + area(b) - inter;
+  return uni <= 0 ? 0 : inter / uni;
 }

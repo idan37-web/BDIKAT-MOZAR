@@ -5,7 +5,7 @@
 //
 // Built entirely on the IR (the source of truth) — never on the page raster.
 import type { BBox, DocumentIR, PageIR, TextBlockIR } from '../types/catalog';
-import { isTextBlock, isImageBlock } from '../types/catalog';
+import { isTextBlock, isImageBlock, isShapeBlock } from '../types/catalog';
 import {
   detectFormat,
   type PageRole,
@@ -46,7 +46,7 @@ function gaps(a: BBox, b: BBox): { dx: number; dy: number } {
 // Regions: merge per-line text runs into logical blocks (paragraphs / tables)
 // ---------------------------------------------------------------------------
 export interface Region {
-  blockType: 'text' | 'image';
+  blockType: 'text' | 'image' | 'shape';
   bbox: BBox;
   /** Concatenated LOGICAL text (text regions only). */
   text: string;
@@ -60,6 +60,13 @@ export interface Region {
   fontFamily: string;
   /** image regions only. */
   src?: string;
+  /** shape regions only: fill colour. */
+  fill?: string;
+}
+
+/** The value used to decide fixed-vs-dynamic for a region (text / image src / shape fill). */
+function regionValue(r: Region): string {
+  return r.blockType === 'shape' ? (r.fill || '') : r.blockType === 'image' ? (r.src || '') : r.text;
 }
 
 function median(ns: number[]): number {
@@ -167,6 +174,16 @@ export function groupRegions(page: PageIR): Region[] {
       src: img.src,
     });
   }
+
+  for (const sh of page.blocks.filter(isShapeBlock)) {
+    regions.push({
+      blockType: 'shape',
+      bbox: { x: sh.x, y: sh.y, width: sh.width, height: sh.height },
+      text: '', count: 1, maxFont: 0, medFont: 0, weight: 400,
+      color: sh.fill || '#000000', align: 'start', direction: 'ltr', fontFamily: '',
+      fill: sh.fill || '#000000',
+    });
+  }
   return regions;
 }
 
@@ -248,6 +265,7 @@ export function classifyPage(
 // Slot kind inference
 // ---------------------------------------------------------------------------
 function slotKind(role: PageRole, r: Region, isLargestText: boolean): SlotKind {
+  if (r.blockType === 'shape') return 'background';
   if (r.blockType === 'image') return role === 'cover' || role === 'feature' ? 'hero-image' : 'image';
   if (KW.legal.test(r.text)) return 'legal';
   if (role === 'cover' && isLargestText) return 'model-name';
@@ -278,8 +296,10 @@ const SLOT_LABEL: Record<SlotKind, string> = {
   text: 'טקסט',
 };
 
-/** Kinds that are inherently fixed brand furniture rather than per-model content. */
-const FIXED_KINDS = new Set<SlotKind>(['legal', 'logo', 'background']);
+/** Kinds that are inherently fixed brand furniture rather than per-model content.
+ * NOTE: 'background' is NOT here — a shape's fixed/dynamic is decided by cross-doc
+ * evidence so a per-model accent strip (fill differs across models) is caught as dynamic. */
+const FIXED_KINDS = new Set<SlotKind>(['legal', 'logo']);
 
 function styleOf(r: Region): SlotStyle | undefined {
   if (r.blockType !== 'text') return undefined;
@@ -321,9 +341,9 @@ function matchPageRegions(baseRegions: Region[], otherDocPages: Region[][]): Mat
   });
 }
 
-/** Distinct normalized values seen for one matched region across the docs. */
+/** Distinct values (text / shape fill / image src) seen for a matched region across docs. */
 function distinctCount(ms: MatchedSlot): number {
-  const vals = [norm(ms.base.text), ...ms.matches.map((m) => norm(m.text))].filter(Boolean);
+  const vals = [norm(regionValue(ms.base)), ...ms.matches.map((m) => norm(regionValue(m)))].filter(Boolean);
   return new Set(vals).size;
 }
 
@@ -352,9 +372,9 @@ function buildSlot(
   if (FIXED_KINDS.has(kind)) {
     dynamic = false;
     confidence = crossDoc ? 0.7 : 0.5;
-  } else if (crossDoc && blockType === 'text') {
-    // real evidence beats the kind heuristic: a region that differs across models is
-    // dynamic; one identical across all models is fixed brand boilerplate.
+  } else if (crossDoc && (blockType === 'text' || blockType === 'shape')) {
+    // real evidence beats the kind heuristic: a region whose value (text / fill) differs
+    // across models is dynamic; one identical across all models is fixed brand furniture.
     dynamic = group.some((g) => distinctCount(g) > 1);
     confidence = 0.9;
   } else {
@@ -364,11 +384,13 @@ function buildSlot(
   }
 
   const rep = bases.find((b) => b.text) || bases[0];
+  const fill = blockType === 'shape' ? rep.fill : undefined;
   return {
     id, key, kind, blockType, dynamic, bbox,
+    fill,
     style: styleOf(rep),
     label: SLOT_LABEL[kind],
-    sample: blockType === 'image' ? rep.src : joinedText.slice(0, 160),
+    sample: blockType === 'image' ? rep.src : blockType === 'shape' ? fill : joinedText.slice(0, 160),
     fixedContent: !dynamic && blockType === 'text' ? joinedText : undefined,
     confidence: Math.min(1, Math.round(confidence * 100) / 100),
     variants,
@@ -432,6 +454,7 @@ export function learnTemplate(docs: DocumentIR[], opts: LearnOptions = {}): Temp
 
     const textMatched = matched.filter((m) => m.base.blockType === 'text' && m.base.text);
     const imageMatched = matched.filter((m) => m.base.blockType === 'image');
+    const shapeMatched = matched.filter((m) => m.base.blockType === 'shape');
     const largestFont = Math.max(0, ...textMatched.map((m) => m.base.maxFont));
 
     const slots: SlotSpec[] = [];
@@ -442,30 +465,16 @@ export function learnTemplate(docs: DocumentIR[], opts: LearnOptions = {}): Temp
       si++;
     };
 
-    // Dense, fundamentally-single-region pages collapse to canonical slots; narrative
-    // pages keep one slot per region (heading / paragraph / callout). Either way the
-    // user can split or merge during review (Stage 6 mandates manual correction).
-    if (role === 'spec') {
-      const heads = textMatched.filter((m) => /מפרט/.test(m.base.text));
-      const body = textMatched.filter((m) => !heads.includes(m));
-      push('heading', heads);
-      push('spec-table', body);
-    } else if (role === 'colors') {
-      const wheels = textMatched.filter((m) => KW.wheels.test(m.base.text) && !KW.colors.test(m.base.text));
-      const colors = textMatched.filter((m) => !wheels.includes(m));
-      push('colors', colors);
-      push('wheels', wheels);
-    } else if (role === 'back' || role === 'price') {
-      const pollution = textMatched.filter((m) => KW.pollution.test(m.base.text));
-      const legal = textMatched.filter((m) => !pollution.includes(m));
-      push(role === 'price' ? 'price' : 'legal', legal);
-      push('pollution', pollution);
-    } else {
-      for (const m of textMatched) {
-        const isLargest = m.base.maxFont === largestFont && largestFont > 0;
-        push(slotKind(role, m.base, isLargest), [m]);
-      }
+    // ONE slot per region — preserves the original layout at generation time (spec/safety
+    // tables are positioned text: each cell stays a cell, so the grid is reproduced rather
+    // than collapsed into a blob). Cross-doc evidence then makes column labels FIXED and the
+    // per-model values DYNAMIC. The kind comes from the page role (spec→spec-table, etc).
+    for (const m of textMatched) {
+      const isLargest = m.base.maxFont === largestFont && largestFont > 0;
+      push(slotKind(role, m.base, isLargest), [m]);
     }
+    // shapes (design panels/strips) first so they sit under text/images at generation
+    for (const m of shapeMatched) push('background', [m]);
     for (const m of imageMatched) push(slotKind(role, m.base, false), [m]);
 
     // deterministic stack order: by y then x

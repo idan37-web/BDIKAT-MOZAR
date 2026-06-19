@@ -1,8 +1,8 @@
 // Mode-aware page canvas. IR is the source of truth.
 //  - original/compare show the reference raster; editable/reconstructed render from IR.
 import { useRef } from 'react';
-import type { PageIR, TextBlockIR, ImageBlockIR, BlockIR } from '../types/catalog';
-import { isTextBlock, isImageBlock } from '../types/catalog';
+import type { PageIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, BlockIR } from '../types/catalog';
+import { isTextBlock, isImageBlock, isShapeBlock } from '../types/catalog';
 import { TextEditOverlay } from '../editor/TextEditOverlay';
 
 export type ViewMode = 'original' | 'editable' | 'reconstructed' | 'compare';
@@ -75,6 +75,16 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, editingId,
         <img src={page.previewImage} alt="" draggable={false}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill', userSelect: 'none' }} />
       )}
+
+      {/* shape blocks (design panels/strips) — under images & text, render-only */}
+      {showBlocks && page.blocks.filter(isShapeBlock).sort((a, b) => a.zIndex - b.zIndex).map((b: ShapeBlockIR) => (
+        <div key={b.id} style={{
+          position: 'absolute', left: b.x * scale, top: b.y * scale, width: b.width * scale, height: b.height * scale,
+          background: b.fill || 'transparent', borderRadius: (b.radius || 0) * scale,
+          border: b.stroke ? `${Math.max(1, b.stroke.width * scale)}px solid ${b.stroke.color}` : undefined,
+          opacity: compare ? 0.6 : 1, pointerEvents: 'none',
+        }} />
+      ))}
 
       {/* image blocks (under text) */}
       {showBlocks && page.blocks.filter(isImageBlock).map((b: ImageBlockIR) => {

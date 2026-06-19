@@ -5,7 +5,7 @@
 //  - dynamic slots emit the user's bound content (text or image), or fall back to the
 //    learned sample as an editable placeholder.
 import type {
-  BlockIR, DocumentIR, ImageBlockIR, PageIR, TextBlockIR,
+  BlockIR, DocumentIR, ImageBlockIR, PageIR, TextBlockIR, ShapeBlockIR,
 } from '../types/catalog';
 import type { SlotKind, SlotSpec, TemplateSpec } from '../templates/templateSpec';
 
@@ -104,6 +104,21 @@ function makeImageBlock(slot: SlotSpec, binding: SlotBinding | undefined, z: num
   };
 }
 
+function makeShapeBlock(slot: SlotSpec, binding: SlotBinding | undefined, z: number): ShapeBlockIR {
+  // a dynamic accent shape may be re-coloured via binding.text (a "#rrggbb"); else learned fill
+  const bound = slot.dynamic && binding?.text && /^#[0-9a-f]{6}$/i.test(binding.text.trim()) ? binding.text.trim() : undefined;
+  const fill = bound || slot.fill || '#dddddd';
+  return {
+    id: `${slot.id}_b`,
+    type: 'shape',
+    x: slot.bbox.x, y: slot.bbox.y, width: slot.bbox.width, height: slot.bbox.height,
+    rotation: 0, zIndex: z,
+    source: bound ? 'user' : 'generated',
+    originalBBox: { ...slot.bbox },
+    fill,
+  };
+}
+
 export interface GenerateOptions {
   title?: string;
   /** Default text colour when a slot carries no learned colour. */
@@ -119,9 +134,12 @@ export function generateCatalog(
   const fallbackColor = opts.textColor || spec.tokens.text || '#111418';
   const pages: PageIR[] = spec.pages.map((tp) => {
     const blocks: BlockIR[] = [];
-    // images first (under text); deterministic z from slot order
+    // paint order: shapes (under) → images → text (on top); deterministic z from slot order
     tp.slots.forEach((slot, i) => {
-      if (slot.blockType === 'image') blocks.push(makeImageBlock(slot, bindings[slot.key], i));
+      if (slot.blockType === 'shape') blocks.push(makeShapeBlock(slot, bindings[slot.key], i));
+    });
+    tp.slots.forEach((slot, i) => {
+      if (slot.blockType === 'image') blocks.push(makeImageBlock(slot, bindings[slot.key], 1_000 + i));
     });
     tp.slots.forEach((slot, i) => {
       if (slot.blockType === 'text') blocks.push(makeTextBlock(slot, bindings[slot.key], 1_000_000 + i, fallbackColor));

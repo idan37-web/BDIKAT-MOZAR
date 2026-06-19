@@ -23,21 +23,64 @@ export interface ImageOp {
   hadSMask?: boolean;
 }
 
+/** A filled vector rectangle (background panel / accent strip), in PDF points top-left. */
+export interface ShapeOp {
+  opIndex: number;
+  bbox: { x: number; y: number; width: number; height: number };
+  fill: string; // "#rrggbb"
+}
+
+export interface PageOps { images: ImageOp[]; shapes: ShapeOp[]; }
+
 export type MakeCanvas = (w: number, h: number) => HTMLCanvasElement;
 
-export async function walkPageImages(page: any, OPS: any, pageHeight: number): Promise<ImageOp[]> {
+const toHex = (r: number, g: number, b: number) =>
+  '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+
+function cmykToRgb(c: number, m: number, y: number, k: number): [number, number, number] {
+  return [255 * (1 - c) * (1 - k), 255 * (1 - m) * (1 - k), 255 * (1 - y) * (1 - k)];
+}
+
+/**
+ * Single operator-list walk for import (hard rule): collects BOTH painted images and
+ * filled rectangles (design panels/strips) in one pass with a shared CTM stack. Shape
+ * colours come straight from the fill colour ops (no raster sampling needed).
+ */
+export async function walkPage(page: any, OPS: any, pageHeight: number): Promise<PageOps> {
   const ol = await page.getOperatorList();
   const fns: number[] = ol.fnArray; const args: any[] = ol.argsArray;
   let ctm: Mat = [...IDENT] as Mat; const stack: Mat[] = [];
   let smaskActive = false;
-  const out: ImageOp[] = [];
+  let fill = '#000000';
+  let pathBox: number[] | null = null; // [minX,minY,maxX,maxY] in path space (constructPath args[2])
+  const images: ImageOp[] = [];
+  const shapes: ShapeOp[] = [];
   const isXObj = (fn: number) => fn === OPS.paintImageXObject || fn === OPS.paintJpegXObject || fn === OPS.paintImageXObjectRepeat;
+  const isFill = (fn: number) => fn === OPS.fill || fn === OPS.eoFill || fn === OPS.fillStroke || fn === OPS.eoFillStroke || fn === OPS.closeFillStroke;
+
   for (let i = 0; i < fns.length; i++) {
     const fn = fns[i], a = args[i];
     if (fn === OPS.save) stack.push([...ctm] as Mat);
     else if (fn === OPS.restore) { if (stack.length) ctm = stack.pop() as Mat; }
     else if (fn === OPS.transform) ctm = mul(ctm, a as Mat);
     else if (fn === OPS.setGState) { try { smaskActive = JSON.stringify(a).includes('SMask') ? !JSON.stringify(a).includes('"None"') : smaskActive; } catch { /* ignore */ } }
+    else if (fn === OPS.setFillRGBColor) { const c = a as number[]; fill = toHex(c[0], c[1], c[2]); }
+    else if (fn === OPS.setFillGray) { const g = (a as number[])[0]; const v = g <= 1 ? g * 255 : g; fill = toHex(v, v, v); }
+    else if (fn === OPS.setFillCMYKColor) { const [c, m, y, k] = a as number[]; const [r, g, b] = cmykToRgb(c, m, y, k); fill = toHex(r, g, b); }
+    else if (fn === OPS.constructPath) { pathBox = Array.isArray(a) ? (a[2] as number[]) : null; }
+    else if (isFill(fn)) {
+      if (pathBox && pathBox.length === 4) {
+        const [x0, y0] = apply(ctm, pathBox[0], pathBox[1]);
+        const [x1, y1] = apply(ctm, pathBox[2], pathBox[3]);
+        const minX = Math.min(x0, x1), maxX = Math.max(x0, x1), minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
+        const w = maxX - minX, h = maxY - minY;
+        // significant, non-white panels only (white == page background → noise)
+        if (w >= 24 && h >= 10 && fill.toLowerCase() !== '#ffffff') {
+          shapes.push({ opIndex: i, fill, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
+        }
+      }
+      pathBox = null;
+    } else if (fn === OPS.endPath || fn === OPS.stroke) { pathBox = null; }
     else if (isXObj(fn) || fn === OPS.paintInlineImageXObject || fn === OPS.paintImageMaskXObject) {
       const pts = [apply(ctm, 0, 0), apply(ctm, 1, 0), apply(ctm, 1, 1), apply(ctm, 0, 1)];
       const xs = pts.map((p) => p[0]); const ys = pts.map((p) => p[1]);
@@ -45,12 +88,17 @@ export async function walkPageImages(page: any, OPS: any, pageHeight: number): P
       const w = maxX - minX, h = maxY - minY;
       if (w < 20 || h < 20) continue;
       const bbox = { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) };
-      if (fn === OPS.paintInlineImageXObject) out.push({ opIndex: i, bbox, inline: a?.[0], hadSMask: smaskActive });
-      else if (fn === OPS.paintImageMaskXObject) out.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, mask: true, hadSMask: smaskActive });
-      else out.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, hadSMask: smaskActive });
+      if (fn === OPS.paintInlineImageXObject) images.push({ opIndex: i, bbox, inline: a?.[0], hadSMask: smaskActive });
+      else if (fn === OPS.paintImageMaskXObject) images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, mask: true, hadSMask: smaskActive });
+      else images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, hadSMask: smaskActive });
     }
   }
-  return out;
+  return { images, shapes };
+}
+
+/** Back-compat thin wrapper (image-only callers). */
+export async function walkPageImages(page: any, OPS: any, pageHeight: number): Promise<ImageOp[]> {
+  return (await walkPage(page, OPS, pageHeight)).images;
 }
 
 function getObj(page: any, name: string): Promise<any> {

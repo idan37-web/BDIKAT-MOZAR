@@ -12,7 +12,8 @@
     "stage0": "tsx scripts/stage0.ts",
     "verify:learn": "tsx scripts/verifyTemplateLearning.mts",
     "verify:gen": "tsx scripts/verifyGenerate.mts",
-    "verify:milestone-a": "tsx scripts/verifyMilestoneA.mts"
+    "verify:milestone-a": "tsx scripts/verifyMilestoneA.mts",
+    "verify:shapes": "tsx scripts/verifyShapes.mts"
   },
   "dependencies": {
     "@fontsource/heebo": "^5.2.8",

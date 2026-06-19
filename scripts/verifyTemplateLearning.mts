@@ -27,8 +27,11 @@ expect('cover has dynamic model-name (cross-doc)', !!model && model.dynamic && m
 
 const specPages = tpl.pages.filter((p) => p.role === 'spec');
 expect('found spec page(s)', specPages.length > 0);
-expect('spec page consolidated to <=3 slots', specPages.every((p) => p.slots.length <= 3));
-expect('spec page has a dynamic spec-table', specPages.some((p) => p.slots.some((s) => s.kind === 'spec-table' && s.dynamic)));
+// table cells are preserved as positioned slots (so generation reproduces the grid)
+expect('spec page preserves positioned table cells', specPages.some((p) => p.slots.filter((s) => s.kind === 'spec-table').length > 10));
+// cross-doc evidence: column labels FIXED, per-model values DYNAMIC, within the same table
+expect('spec table has both fixed labels and dynamic values', specPages.some((p) =>
+  p.slots.some((s) => s.kind === 'spec-table' && s.dynamic) && p.slots.some((s) => s.kind === 'spec-table' && !s.dynamic)));
 
 const back = tpl.pages.find((p) => p.role === 'back');
 expect('found back/legal page', !!back);

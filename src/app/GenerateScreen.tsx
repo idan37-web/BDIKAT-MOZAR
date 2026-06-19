@@ -38,7 +38,8 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
     );
   }
 
-  const slots = dynamicSlots(spec);
+  // shape (background/accent) slots auto-fill from the learned design → not in the manual form
+  const slots = dynamicSlots(spec).filter((s) => s.slot.blockType !== 'shape');
   const missing = validateCatalog(spec, bindings);
   const setText = (key: string, text: string) => setBindings((b) => ({ ...b, [key]: { ...b[key], key, text } }));
   const setImage = (key: string, file: File) => {

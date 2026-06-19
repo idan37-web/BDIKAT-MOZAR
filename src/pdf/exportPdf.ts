@@ -9,8 +9,8 @@ import {
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { logicalToVisual } from './hebrew';
-import type { DocumentIR, TextBlockIR, ImageBlockIR, BlockIR } from '../types/catalog';
-import { isTextBlock, isImageBlock } from '../types/catalog';
+import type { DocumentIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, BlockIR } from '../types/catalog';
+import { isTextBlock, isImageBlock, isShapeBlock } from '../types/catalog';
 
 function hexToRgb(hex: string): RGB {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
@@ -54,6 +54,17 @@ async function embedImage(pdf: PDFDocument, src: string, cache: Map<string, PDFI
   }
   cache.set(src, img);
   return img;
+}
+
+/** Draw a filled shape (design panel/strip) as a vector rectangle. */
+function drawShapeBlock(page: PDFPage, pageH: number, b: ShapeBlockIR): void {
+  const y = pageH - b.y - b.height;
+  page.drawRectangle({
+    x: b.x, y, width: b.width, height: b.height,
+    color: b.fill ? hexToRgb(b.fill) : undefined,
+    borderColor: b.stroke ? hexToRgb(b.stroke.color) : undefined,
+    borderWidth: b.stroke ? b.stroke.width : undefined,
+  });
 }
 
 /** Draw an image block, embedding at full resolution and clipping to its box. */
@@ -132,7 +143,9 @@ export async function exportPdf(doc: DocumentIR, fontBytes: Uint8Array): Promise
     const ordered: BlockIR[] = [...page.blocks].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
     for (const b of ordered) {
       if (b.deleted) continue;
-      if (isImageBlock(b)) {
+      if (isShapeBlock(b)) {
+        drawShapeBlock(p, page.height, b);
+      } else if (isImageBlock(b)) {
         const img = await embedImage(pdf, b.src, imgCache);
         drawImageBlock(p, page.height, b, img);
       } else if (isTextBlock(b)) {

@@ -52,7 +52,9 @@ export interface SlotSpec {
   key: string;
   kind: SlotKind;
   /** Block type the slot generates. */
-  blockType: 'text' | 'image';
+  blockType: 'text' | 'image' | 'shape';
+  /** Shape slots only: fill colour "#rrggbb" (a per-model accent when dynamic). */
+  fill?: string;
   /** true = filled per catalog (model name, hero, values); false = fixed brand element. */
   dynamic: boolean;
   /** PDF points, top-left origin. */

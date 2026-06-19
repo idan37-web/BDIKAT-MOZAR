@@ -85,6 +85,15 @@ export interface ImageBlockIR extends BlockIR {
   mask?: string;
 }
 
+export interface ShapeBlockIR extends BlockIR {
+  type: 'shape' | 'background';
+  /** Fill colour "#rrggbb" (sampled from the source fill op). */
+  fill?: string;
+  stroke?: { color: string; width: number };
+  /** Corner radius in points. */
+  radius?: number;
+}
+
 export interface PageIR {
   id: string;
   /** PDF points. */
@@ -107,3 +116,4 @@ export interface DocumentIR {
 /** Narrowing helpers. */
 export const isTextBlock = (b: BlockIR): b is TextBlockIR => b.type === 'text';
 export const isImageBlock = (b: BlockIR): b is ImageBlockIR => b.type === 'image';
+export const isShapeBlock = (b: BlockIR): b is ShapeBlockIR => b.type === 'shape' || b.type === 'background';
