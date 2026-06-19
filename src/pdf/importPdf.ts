@@ -1,0 +1,98 @@
+// Stage 2 (C.4): turn an uploaded PDF (ArrayBuffer) into a DocumentIR using pdf.js.
+// The imported IR — never IMPORT3008/IMPORTC3 — is the source of truth after upload.
+import type { DocumentIR, PageIR, ImageBlockIR } from '../types/catalog';
+import { extractTextBlocks } from './extractLayout';
+import { renderPageCanvas, cropCanvasErasingText } from './renderPage';
+import { walkPageImages, resolveImage } from './extractImages';
+
+let workerConfigured = false;
+
+// pdf.js entry differs between browser (worker) and Node (verification).
+async function loadPdfjs() {
+  const pdfjs = await import('pdfjs-dist');
+  if (typeof window !== 'undefined' && !workerConfigured) {
+    // Inline worker (base64 blob): works in dev, in a normal build, AND in a single-file
+    // offline build — no separate worker URL to fetch.
+    const Worker = (await import('pdfjs-dist/build/pdf.worker.min.mjs?worker&inline')).default;
+    (pdfjs as any).GlobalWorkerOptions.workerPort = new Worker();
+    workerConfigured = true;
+  }
+  return pdfjs as any;
+}
+
+export interface ImportOptions {
+  renderPreviews?: boolean; // browser only
+  previewScale?: number;
+}
+
+export async function importPdf(
+  data: ArrayBuffer | Uint8Array,
+  sourcePdfName: string,
+  opts: ImportOptions = {},
+): Promise<DocumentIR> {
+  const pdfjs = await loadPdfjs();
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const doc = await pdfjs.getDocument({ data: bytes, isEvalSupported: false, useSystemFonts: false }).promise;
+
+  const pages: PageIR[] = [];
+  for (let n = 1; n <= doc.numPages; n++) {
+    const page = await doc.getPage(n);
+    const vp = page.getViewport({ scale: 1 });
+    const id = `p${n}`;
+    const tc = await page.getTextContent();
+    const textBlocks = extractTextBlocks(tc, vp.height, id);
+    // text sits in paint order ABOVE images (captions over photos)
+    textBlocks.forEach((b, i) => { b.zIndex = 1_000_000 + i; });
+
+    let previewImage: string | undefined;
+    const imageBlocks: ImageBlockIR[] = [];
+    if (opts.renderPreviews && typeof window !== 'undefined') {
+      const makeCanvas = (w: number, h: number) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+      try {
+        const rendered = await renderPageCanvas(page, opts.previewScale ?? 2);
+        previewImage = rendered.dataUrl;
+        // SINGLE op-list walk → image ops in paint order; resolve a CLEAN source each.
+        const ops = await walkPageImages(page, (pdfjs as any).OPS, vp.height);
+        for (let i = 0; i < ops.length; i++) {
+          const op = ops[i];
+          let src = await resolveImage(page, op, makeCanvas);
+          if (!src) {
+            // last resort: crop preview but ERASE overlapping text so it can't carry text
+            const overlap = textBlocks.filter((t) => !(t.x + t.width < op.bbox.x || t.x > op.bbox.x + op.bbox.width || t.y + t.height < op.bbox.y || t.y > op.bbox.y + op.bbox.height));
+            src = cropCanvasErasingText(rendered.canvas, rendered.scale, op.bbox, overlap);
+            console.warn(`[import] RENDER-CROP FALLBACK fired on ${id} image op#${op.opIndex} (${op.name || 'inline'}) — clean source unresolved; text erased. Resolution has a gap.`);
+          }
+          if (!src) continue;
+          imageBlocks.push({
+            id: `${id}_img${i}`, type: 'image', x: op.bbox.x, y: op.bbox.y, width: op.bbox.width, height: op.bbox.height,
+            rotation: 0, zIndex: op.opIndex, source: 'original',
+            originalBBox: { x: op.bbox.x, y: op.bbox.y, width: op.bbox.width, height: op.bbox.height },
+            src, originalImageRef: src, fit: 'cover',
+          });
+        }
+      } catch (e) { console.warn('[import] image pass failed', e); }
+    }
+
+    pages.push({
+      id,
+      width: Math.round(vp.width),
+      height: Math.round(vp.height),
+      rotation: vp.rotation || 0,
+      originalPdfPageIndex: n - 1,
+      previewImage,
+      // images first (under text) for deterministic stacking
+      blocks: [...imageBlocks, ...textBlocks],
+    });
+  }
+
+  const n = sourcePdfName.toLowerCase();
+  const brand = /peugeot|208|2008|3008|5008|rifter|boxer/.test(n) ? 'peugeot'
+    : /citroen|citro|c3|c4|c5|berlingo|jumpy/.test(n) ? 'citroen' : 'unknown';
+
+  return {
+    id: `doc_${Date.now()}`,
+    sourcePdfName,
+    brand,
+    pages,
+  };
+}

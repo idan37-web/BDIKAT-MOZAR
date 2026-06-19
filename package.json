@@ -1,0 +1,35 @@
+{
+  "name": "autospec-studio",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "AutoSpec Studio — catalog/PDF studio for automotive brochures (Hebrew, RTL). Rebuild per docs/AutoSpec-directive.md.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "stage0": "tsx scripts/stage0.ts",
+    "verify:learn": "tsx scripts/verifyTemplateLearning.mts"
+  },
+  "dependencies": {
+    "@fontsource/heebo": "^5.2.8",
+    "@pdf-lib/fontkit": "^1.1.1",
+    "bidi-js": "^1.0.3",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.0",
+    "@types/node": "^25.9.3",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}

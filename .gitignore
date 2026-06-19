@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.vite/
+dist-single/
+
+# compiled TS output (tsc is noEmit; Vite builds from source)
+src/**/*.js
+!src/legacy/legacy-app.jsx
+scripts/*.js
+
+# macOS junk
+._*
+Thumbs.db
+.verify/

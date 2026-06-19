@@ -1,0 +1,41 @@
+// Brand fonts. Imported as URLs so they bundle in dev/build AND inline (data URI) in
+// the single-file build — never fetched from a path that won't exist offline.
+// Imported text must never use fontFamily:inherit; it gets the brand font.
+import peugeotRegular from '../assets/PeugeotNewHebrew-Regular.otf?url';
+import peugeotBold from '../assets/PeugeotNewHebrew-Bold.otf?url';
+
+export interface BrandFont {
+  brand: string;
+  family: string;          // CSS font-family to apply
+  regularUrl: string;      // for @font-face + pdf-lib embedding
+  boldUrl?: string;
+}
+
+const PEUGEOT: BrandFont = { brand: 'peugeot', family: 'PeugeotNewHebrew', regularUrl: peugeotRegular, boldUrl: peugeotBold };
+
+/** Detect the brand from the source filename (extend per brand as fonts arrive). */
+export function detectBrand(name?: string): string {
+  const n = (name || '').toLowerCase();
+  if (/peugeot|208|2008|3008|5008|rifter|boxer/.test(n)) return 'peugeot';
+  if (/citroen|citroën|c3|c4|c5|berlingo|jumpy/.test(n)) return 'citroen';
+  return 'unknown';
+}
+
+export function brandFont(brand: string): BrandFont | null {
+  // Only Peugeot's font has been supplied. Others fall back to a Hebrew system stack.
+  return brand === 'peugeot' ? PEUGEOT : null;
+}
+
+const injected = new Set<string>();
+/** Inject an @font-face once so the DOM editor renders in the brand font. */
+export function ensureFontFace(bf: BrandFont): void {
+  if (injected.has(bf.family)) return;
+  injected.add(bf.family);
+  const css = `@font-face{font-family:'${bf.family}';src:url('${bf.regularUrl}');font-weight:400;font-display:swap;}`
+    + (bf.boldUrl ? `@font-face{font-family:'${bf.family}';src:url('${bf.boldUrl}');font-weight:700;font-display:swap;}` : '');
+  const style = document.createElement('style');
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+
+export const FALLBACK_HEBREW = "'Assistant','Heebo',system-ui,sans-serif";
