@@ -134,9 +134,18 @@ export function generateCatalog(
   const fallbackColor = opts.textColor || spec.tokens.text || '#111418';
   const pages: PageIR[] = spec.pages.map((tp) => {
     const blocks: BlockIR[] = [];
-    // paint order: shapes (under) → images → text (on top); deterministic z from slot order
+    // paint order: fixed design (panels/gridlines) → shape slots → images → text (on top)
+    (tp.design || []).forEach((d, i) => {
+      const shape: ShapeBlockIR = {
+        id: `${tp.index}_d${i}`, type: 'shape',
+        x: d.bbox.x, y: d.bbox.y, width: d.bbox.width, height: d.bbox.height,
+        rotation: 0, zIndex: d.line ? 500 + i : i, source: 'generated',
+        originalBBox: { ...d.bbox }, fill: d.fill,
+      };
+      blocks.push(shape);
+    });
     tp.slots.forEach((slot, i) => {
-      if (slot.blockType === 'shape') blocks.push(makeShapeBlock(slot, bindings[slot.key], i));
+      if (slot.blockType === 'shape') blocks.push(makeShapeBlock(slot, bindings[slot.key], 100 + i));
     });
     tp.slots.forEach((slot, i) => {
       if (slot.blockType === 'image') blocks.push(makeImageBlock(slot, bindings[slot.key], 1_000 + i));

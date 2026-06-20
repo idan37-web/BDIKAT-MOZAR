@@ -30,6 +30,9 @@ const shapeSlots = tpl.pages.flatMap((p) => p.slots).filter((s) => s.blockType =
 expect('shape slots learned', shapeSlots.length >= 10);
 expect('per-model accent detected as a dynamic shape', shapeSlots.some((s) => s.dynamic && s.crossDocEvidence));
 expect('fixed brand panels detected', shapeSlots.some((s) => !s.dynamic));
+// gridlines/rules learned into the fixed design layer (not slots)
+const designLines = tpl.pages.flatMap((p) => p.design || []).filter((d) => d.line);
+expect('table gridlines learned into the design layer', designLines.length >= 50);
 
 // (3) carried through generation + drawn in export
 const model = dynamicSlots(tpl).find((s) => s.slot.kind === 'model-name')!.slot;

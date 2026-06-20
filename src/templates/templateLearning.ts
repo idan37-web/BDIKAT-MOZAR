@@ -107,10 +107,11 @@ function regionText(blocks: TextBlockIR[], rtl: boolean): string {
 /**
  * Cluster a page's text runs into regions. Two runs join when their boxes are
  * within ~1 line vertically and ~1 glyph horizontally AND have a comparable font
- * size — so a heading never merges into body copy, but a whole spec grid (cells
- * chained neighbour-to-neighbour) collapses into a single region.
+ * size — so a heading never merges into body copy. For DENSE table pages pass
+ * `cluster=false` so every positioned cell stays its own region (the grid is then
+ * reproduced at generation time instead of collapsing into a few blobs).
  */
-export function groupRegions(page: PageIR): Region[] {
+export function groupRegions(page: PageIR, cluster = true): Region[] {
   const texts = page.blocks.filter(isTextBlock);
   const images = page.blocks.filter(isImageBlock);
 
@@ -119,17 +120,19 @@ export function groupRegions(page: PageIR): Region[] {
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
   const join = (i: number, j: number) => { parent[find(i)] = find(j); };
 
-  for (let i = 0; i < texts.length; i++) {
-    for (let j = i + 1; j < texts.length; j++) {
-      const a = texts[i];
-      const b = texts[j];
-      const fa = a.fontSize || 10;
-      const fb = b.fontSize || 10;
-      const ratio = Math.max(fa, fb) / Math.min(fa, fb);
-      if (ratio > 1.7) continue; // different typographic level
-      const { dx, dy } = gaps(a, b);
-      const f = Math.max(fa, fb);
-      if (dy <= f * 0.9 && dx <= f * 1.4) join(i, j);
+  if (cluster) {
+    for (let i = 0; i < texts.length; i++) {
+      for (let j = i + 1; j < texts.length; j++) {
+        const a = texts[i];
+        const b = texts[j];
+        const fa = a.fontSize || 10;
+        const fb = b.fontSize || 10;
+        const ratio = Math.max(fa, fb) / Math.min(fa, fb);
+        if (ratio > 1.7) continue; // different typographic level
+        const { dx, dy } = gaps(a, b);
+        const f = Math.max(fa, fb);
+        if (dy <= f * 0.9 && dx <= f * 1.4) join(i, j);
+      }
     }
   }
 
@@ -390,7 +393,8 @@ function buildSlot(
     fill,
     style: styleOf(rep),
     label: SLOT_LABEL[kind],
-    sample: blockType === 'image' ? rep.src : blockType === 'shape' ? fill : joinedText.slice(0, 160),
+    // full text (not truncated): generation falls back to `sample` for unbound dynamic slots
+    sample: blockType === 'image' ? rep.src : blockType === 'shape' ? fill : joinedText,
     fixedContent: !dynamic && blockType === 'text' ? joinedText : undefined,
     confidence: Math.min(1, Math.round(confidence * 100) / 100),
     variants,
@@ -401,6 +405,14 @@ function buildSlot(
 // ---------------------------------------------------------------------------
 // Main entry
 // ---------------------------------------------------------------------------
+/** Dense table page = many small-font runs → keep cells unclustered (preserve the grid). */
+function isDensePage(page: PageIR): boolean {
+  const texts = page.blocks.filter(isTextBlock);
+  if (texts.length < 40) return false;
+  const small = texts.filter((t) => t.fontSize < 10).length;
+  return small / texts.length >= 0.55;
+}
+
 export interface LearnOptions {
   family?: string;
   /** Lowercase model token to treat as dynamic when learning from a single doc. */
@@ -438,18 +450,23 @@ export function learnTemplate(docs: DocumentIR[], opts: LearnOptions = {}): Temp
     || docs.map(modelTokenFromCover).filter((t): t is string => !!t);
 
   // pre-group every doc's pages into regions once
-  const docRegions = docs.map((d) => d.pages.map((p) => groupRegions(p)));
+  const docRegions = docs.map((d) => d.pages.map((p) => groupRegions(p, !isDensePage(p))));
   const baseRegions = docRegions[0];
   const maxPages = base.pages.length;
 
   const pages: TemplatePageSpec[] = [];
   for (let pi = 0; pi < maxPages; pi++) {
     const page = base.pages[pi];
-    const regions = baseRegions[pi];
+    const allRegions = baseRegions[pi];
+    // thin shape regions = gridlines/rules → fixed design layer (too many to be slots);
+    // panels (filled) + text + images go through slot learning.
+    const isLine = (r: Region) => r.blockType === 'shape' && Math.min(r.bbox.width, r.bbox.height) <= 3;
+    const designShapes = allRegions.filter(isLine);
+    const regions = allRegions.filter((r) => !isLine(r));
     const { role, evidence } = classifyPage(page, regions, pi, maxPages);
 
     // same-index regions from the OTHER docs (skeleton aligns by index)
-    const otherPages = docRegions.slice(1).map((dr) => dr[pi]).filter((r): r is Region[] => !!r);
+    const otherPages = docRegions.slice(1).map((dr) => dr[pi]?.filter((r) => !isLine(r))).filter((r): r is Region[] => !!r);
     const matched = matchPageRegions(regions, otherPages);
 
     const textMatched = matched.filter((m) => m.base.blockType === 'text' && m.base.text);
@@ -480,7 +497,9 @@ export function learnTemplate(docs: DocumentIR[], opts: LearnOptions = {}): Temp
     // deterministic stack order: by y then x
     slots.sort((a, b) => a.bbox.y - b.bbox.y || a.bbox.x - b.bbox.x);
 
-    pages.push({ index: pi, role, width: page.width, height: page.height, roleEvidence: evidence, slots });
+    // design layer = gridlines/rules only (panels stay reviewable 'background' slots above)
+    const design = designShapes.map((r) => ({ bbox: r.bbox, fill: r.fill || '#999999', line: true }));
+    pages.push({ index: pi, role, width: page.width, height: page.height, roleEvidence: evidence, slots, design });
   }
 
   // tokens: accent is per-model (brief) — flag dynamic if text colour varied

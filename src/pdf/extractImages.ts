@@ -23,11 +23,12 @@ export interface ImageOp {
   hadSMask?: boolean;
 }
 
-/** A filled vector rectangle (background panel / accent strip), in PDF points top-left. */
+/** A vector rectangle: a filled panel/strip, or a thin stroked line (table gridline). */
 export interface ShapeOp {
   opIndex: number;
   bbox: { x: number; y: number; width: number; height: number };
   fill: string; // "#rrggbb"
+  line?: boolean; // true = a stroked rule/gridline (render as a thin rect of `fill`)
 }
 
 export interface PageOps { images: ImageOp[]; shapes: ShapeOp[]; }
@@ -52,11 +53,21 @@ export async function walkPage(page: any, OPS: any, pageHeight: number): Promise
   let ctm: Mat = [...IDENT] as Mat; const stack: Mat[] = [];
   let smaskActive = false;
   let fill = '#000000';
+  let strokeCol = '#000000';
   let pathBox: number[] | null = null; // [minX,minY,maxX,maxY] in path space (constructPath args[2])
   const images: ImageOp[] = [];
   const shapes: ShapeOp[] = [];
   const isXObj = (fn: number) => fn === OPS.paintImageXObject || fn === OPS.paintJpegXObject || fn === OPS.paintImageXObjectRepeat;
-  const isFill = (fn: number) => fn === OPS.fill || fn === OPS.eoFill || fn === OPS.fillStroke || fn === OPS.eoFillStroke || fn === OPS.closeFillStroke;
+  const isFill = (fn: number) => fn === OPS.fill || fn === OPS.eoFill;
+  const isStroke = (fn: number) => fn === OPS.stroke || fn === OPS.closeStroke;
+  const isFillStroke = (fn: number) => fn === OPS.fillStroke || fn === OPS.eoFillStroke || fn === OPS.closeFillStroke;
+
+  const xform = (box: number[]) => {
+    const [x0, y0] = apply(ctm, box[0], box[1]);
+    const [x1, y1] = apply(ctm, box[2], box[3]);
+    const minX = Math.min(x0, x1), maxX = Math.max(x0, x1), minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
+    return { minX, maxX, minY, maxY, w: maxX - minX, h: maxY - minY };
+  };
 
   for (let i = 0; i < fns.length; i++) {
     const fn = fns[i], a = args[i];
@@ -67,20 +78,34 @@ export async function walkPage(page: any, OPS: any, pageHeight: number): Promise
     else if (fn === OPS.setFillRGBColor) { const c = a as number[]; fill = toHex(c[0], c[1], c[2]); }
     else if (fn === OPS.setFillGray) { const g = (a as number[])[0]; const v = g <= 1 ? g * 255 : g; fill = toHex(v, v, v); }
     else if (fn === OPS.setFillCMYKColor) { const [c, m, y, k] = a as number[]; const [r, g, b] = cmykToRgb(c, m, y, k); fill = toHex(r, g, b); }
+    else if (fn === OPS.setStrokeRGBColor) { const c = a as number[]; strokeCol = toHex(c[0], c[1], c[2]); }
+    else if (fn === OPS.setStrokeGray) { const g = (a as number[])[0]; const v = g <= 1 ? g * 255 : g; strokeCol = toHex(v, v, v); }
+    else if (fn === OPS.setStrokeCMYKColor) { const [c, m, y, k] = a as number[]; const [r, g, b] = cmykToRgb(c, m, y, k); strokeCol = toHex(r, g, b); }
     else if (fn === OPS.constructPath) { pathBox = Array.isArray(a) ? (a[2] as number[]) : null; }
-    else if (isFill(fn)) {
+    else if (isFill(fn) || isFillStroke(fn)) {
       if (pathBox && pathBox.length === 4) {
-        const [x0, y0] = apply(ctm, pathBox[0], pathBox[1]);
-        const [x1, y1] = apply(ctm, pathBox[2], pathBox[3]);
-        const minX = Math.min(x0, x1), maxX = Math.max(x0, x1), minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
-        const w = maxX - minX, h = maxY - minY;
+        const { minX, maxY, w, h } = xform(pathBox);
         // significant, non-white panels only (white == page background → noise)
         if (w >= 24 && h >= 10 && fill.toLowerCase() !== '#ffffff') {
           shapes.push({ opIndex: i, fill, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
         }
       }
       pathBox = null;
-    } else if (fn === OPS.endPath || fn === OPS.stroke) { pathBox = null; }
+    } else if (isStroke(fn)) {
+      if (pathBox && pathBox.length === 4) {
+        const { minX, maxY, w, h } = xform(pathBox);
+        // thin long stroke = a table rule / gridline → a thin rect of the stroke colour
+        const thin = Math.min(w, h) <= 2.5;
+        const long = Math.max(w, h) >= 8;
+        if (thin && long) {
+          shapes.push({ opIndex: i, fill: strokeCol, line: true, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)) } });
+        } else if (!thin && w >= 24 && h >= 10) {
+          // a stroked rectangle outline (kept as a faint panel border via the line colour)
+          shapes.push({ opIndex: i, fill: strokeCol, line: true, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: 1 } });
+        }
+      }
+      pathBox = null;
+    } else if (fn === OPS.endPath) { pathBox = null; }
     else if (isXObj(fn) || fn === OPS.paintInlineImageXObject || fn === OPS.paintImageMaskXObject) {
       const pts = [apply(ctm, 0, 0), apply(ctm, 1, 0), apply(ctm, 1, 1), apply(ctm, 0, 1)];
       const xs = pts.map((p) => p[0]); const ys = pts.map((p) => p[1]);

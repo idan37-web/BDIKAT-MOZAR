@@ -74,6 +74,15 @@ export interface SlotSpec {
   crossDocEvidence: boolean;
 }
 
+/** Fixed design furniture (panels + gridlines) emitted wholesale at generation — NOT
+ * reviewable slots (there are too many gridlines to review individually). */
+export interface ShapeDesign {
+  bbox: BBox;
+  fill: string;
+  /** thin stroked rule/gridline (vs a filled panel). */
+  line?: boolean;
+}
+
 export interface TemplatePageSpec {
   index: number;
   role: PageRole;
@@ -83,6 +92,8 @@ export interface TemplatePageSpec {
   /** Why this role was chosen (transparency for the review UI). */
   roleEvidence: string[];
   slots: SlotSpec[];
+  /** Fixed background design (panels + gridlines) reproduced at generation time. */
+  design?: ShapeDesign[];
 }
 
 /** Brand-level style tokens. The accent colour is per-model → flagged dynamic. */

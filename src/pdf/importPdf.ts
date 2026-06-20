@@ -107,16 +107,23 @@ export async function importPdf(
   };
 }
 
-/** Merge near-duplicate filled rects (same fill + heavy overlap) and cap per-page count. */
+/** Merge near-duplicate filled panels (cap 50 by area) and keep distinct rules/lines (cap 400). */
 function dedupeShapes(shapes: ShapeOp[]): ShapeOp[] {
-  const out: ShapeOp[] = [];
-  for (const s of shapes) {
-    const dup = out.find((o) => o.fill === s.fill && iou(o.bbox, s.bbox) > 0.85);
+  const panels: ShapeOp[] = [];
+  for (const s of shapes.filter((x) => !x.line)) {
+    const dup = panels.find((o) => o.fill === s.fill && iou(o.bbox, s.bbox) > 0.85);
     if (dup) { if (area(s.bbox) > area(dup.bbox)) Object.assign(dup, s); continue; }
-    out.push({ ...s });
+    panels.push({ ...s });
   }
-  // largest first; keep the most prominent panels
-  return out.sort((a, b) => area(b.bbox) - area(a.bbox)).slice(0, 80);
+  const lines: ShapeOp[] = [];
+  for (const s of shapes.filter((x) => x.line)) {
+    if (lines.some((o) => o.fill === s.fill && iou(o.bbox, s.bbox) > 0.6)) continue;
+    lines.push({ ...s });
+  }
+  return [
+    ...panels.sort((a, b) => area(b.bbox) - area(a.bbox)).slice(0, 50),
+    ...lines.slice(0, 400),
+  ];
 }
 function area(b: { width: number; height: number }): number { return b.width * b.height; }
 function iou(a: ShapeOp['bbox'], b: ShapeOp['bbox']): number {
