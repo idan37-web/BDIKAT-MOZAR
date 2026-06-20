@@ -6,6 +6,8 @@ import type { DocumentIR } from '../types/catalog';
 import type { SlotSpec, TemplateSpec } from '../templates/templateSpec';
 import { listTemplates } from '../templates/storage';
 import { generateCatalog, validateCatalog, dynamicSlots, REQUIRED_KINDS, type BindingMap } from '../catalog/generateCatalog';
+import { autofitDocument, canvasMeasureFor } from '../catalog/autofit';
+import { brandFont, ensureFontFace, FALLBACK_HEBREW } from './brandFont';
 
 const ROLE_HE: Record<string, string> = {
   cover: 'שער', feature: 'עמוד שיווקי', interior: 'עיצוב פנים', colors: 'צבעים',
@@ -50,7 +52,13 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
 
   function create() {
     if (missing.length) { setShowMissing(true); return; }
-    onCreate(generateCatalog(spec!, bindings));
+    const doc = generateCatalog(spec!, bindings);
+    // Milestone B: auto-fit text to its box before opening (shrink→wrap→grow→flag)
+    const bf = brandFont(spec!.brand || '');
+    if (bf) ensureFontFace(bf);
+    const family = bf ? `'${bf.family}', ${FALLBACK_HEBREW}` : FALLBACK_HEBREW;
+    autofitDocument(doc, canvasMeasureFor(family));
+    onCreate(doc);
   }
 
   const required = (s: SlotSpec) => REQUIRED_KINDS.has(s.kind);

@@ -14,7 +14,8 @@
     "verify:gen": "tsx scripts/verifyGenerate.mts",
     "verify:milestone-a": "tsx scripts/verifyMilestoneA.mts",
     "verify:shapes": "tsx scripts/verifyShapes.mts",
-    "verify:images": "tsx scripts/verifyImagesHeadless.mts"
+    "verify:images": "tsx scripts/verifyImagesHeadless.mts",
+    "verify:autofit": "tsx scripts/verifyAutofit.mts"
   },
   "dependencies": {
     "@fontsource/heebo": "^5.2.8",

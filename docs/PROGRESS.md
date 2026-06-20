@@ -153,6 +153,17 @@ add it in `src/app/brandFont.ts` (and embed in export).
 
 ## Phase "usable on a real catalog" — milestones
 Spec: `docs/PHASE-usable-on-real-catalog.md`. Hardening only — NO new slot types/templates/effects/print.
+Verification gates (all headless, real PDFs): `npm run verify:learn|gen|milestone-a|shapes|images|autofit`.
+
+- ✅ **Design fidelity (user-requested)** — vector panels/strips/swatches extracted into the IR; tables reproduced
+  cell-by-cell with gridlines (`design[]` layer); photos extractable headlessly. See "Design-fidelity pass" below.
+- ✅ **B — generation-time auto-fit** (`src/catalog/autofit.ts`). Before opening/exporting, each text block is
+  MEASURED vs its box and: font shrinks to an 85% floor → wraps → box grows within page bounds → else **flagged**
+  (never silently clipped). `exportPdf` now WRAPS each line to the box width (matches the DOM editor) so long lines
+  don't overflow horizontally. RTL preserved (wrap on words in logical order; visual order applied at draw).
+  Run in `GenerateScreen` via a canvas measurer; gate `npm run verify:autofit` (long marketing text + long cell →
+  fits or flagged, font never below floor, real PDF). NOTE: row-overflow continuation (more rows than the template)
+  is deferred to Milestone D (structured table) — cell text auto-fits, but extra ROWS need the structured model.
 - ✅ **A — end-to-end on ONE real family.** Fixed the two real-data breaks: (1) **vector export now embeds
   images** (`exportPdf.ts`: PNG via `embedPng`, JPEG via `embedJpg`, drawn under text in zIndex order; cover/
   contain/fill with a pdf-lib clip rect for cover; full source bytes, **no downsampling**; unembeddable/unbound

@@ -9,6 +9,7 @@ import {
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { logicalToVisual } from './hebrew';
+import { wrapText } from '../catalog/autofit';
 import type { DocumentIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, BlockIR } from '../types/catalog';
 import { isTextBlock, isImageBlock, isShapeBlock } from '../types/catalog';
 
@@ -106,7 +107,9 @@ function drawTextBlock(page: PDFPage, pageH: number, tb: TextBlockIR, font: Awai
   const size = tb.fontSize;
   const color = hexToRgb(tb.color);
   const lineGap = size * (tb.lineHeight || 1.2);
-  const lines = tb.text.split('\n');
+  // wrap to the box width (matches the DOM editor) so long lines never overflow horizontally
+  const measure = (t: string, s: number) => font.widthOfTextAtSize(t, s);
+  const lines = wrapText(tb.text, tb.width, size, measure);
   for (let li = 0; li < lines.length; li++) {
     const raw = lines[li];
     if (!raw) continue;
