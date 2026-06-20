@@ -7,7 +7,8 @@ import type { DocumentIR } from '../types/catalog';
 import { importPdf } from '../pdf/importPdf';
 import { learnTemplate, summarizeTemplate } from '../templates/templateLearning';
 import { detectFormat, type SlotKind, type SlotSpec, type TemplateSpec } from '../templates/templateSpec';
-import { saveTemplateLocal, downloadTemplate } from '../templates/storage';
+import { downloadTemplate } from '../templates/storage';
+import { saveTemplate } from '../store/library';
 import { blockScreenRect } from '../editor/coords';
 
 const SLOT_KINDS: SlotKind[] = [
@@ -80,9 +81,9 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
     });
   }
 
-  function doSave() {
+  async function doSave() {
     if (!tpl) return;
-    saveTemplateLocal(tpl);
+    await saveTemplate(tpl, docs[0]?.pages[0]?.previewImage);
     setSaved(true);
   }
 
@@ -147,7 +148,7 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
         <button className="btn btn-sm" onClick={doSave} style={{ background: saved ? 'var(--ok, #0a7d3b)' : 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>
           {saved ? '✓ נשמר' : 'שמור תבנית'}
         </button>
-        {onGenerate && <button className="btn btn-sm" onClick={() => { saveTemplateLocal(tpl); onGenerate(tpl); }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>צור קטלוג ←</button>}
+        {onGenerate && <button className="btn btn-sm" onClick={async () => { await saveTemplate(tpl, docs[0]?.pages[0]?.previewImage); onGenerate(tpl); }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>צור קטלוג ←</button>}
         <button className="btn btn-ghost btn-sm" onClick={onBack}>יציאה</button>
       </header>
 

@@ -4,7 +4,7 @@
 import React from 'react';
 import type { DocumentIR } from '../types/catalog';
 import type { SlotSpec, TemplateSpec } from '../templates/templateSpec';
-import { listTemplates } from '../templates/storage';
+import { listTemplates } from '../store/library';
 import { generateCatalog, validateCatalog, dynamicSlots, REQUIRED_KINDS, type BindingMap } from '../catalog/generateCatalog';
 import { autofitDocument, canvasMeasureFor } from '../catalog/autofit';
 import { brandFont, ensureFontFace, FALLBACK_HEBREW } from './brandFont';
@@ -19,8 +19,15 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
   onCreate: (doc: DocumentIR) => void;
   onBack: () => void;
 }) {
-  const saved = React.useMemo(() => listTemplates(), []);
-  const [spec, setSpec] = React.useState<TemplateSpec | null>(initialSpec || saved[saved.length - 1] || null);
+  const [saved, setSaved] = React.useState<TemplateSpec[]>([]);
+  const [spec, setSpec] = React.useState<TemplateSpec | null>(initialSpec || null);
+  React.useEffect(() => {
+    listTemplates().then((recs) => {
+      const specs = recs.map((r) => r.spec);
+      setSaved(specs);
+      if (!spec) setSpec(initialSpec || specs[0] || null);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [bindings, setBindings] = React.useState<BindingMap>({});
   const [showMissing, setShowMissing] = React.useState(false);
 

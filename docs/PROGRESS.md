@@ -157,6 +157,13 @@ Verification gates (all headless, real PDFs): `npm run verify:learn|gen|mileston
 
 - ✅ **Design fidelity (user-requested)** — vector panels/strips/swatches extracted into the IR; tables reproduced
   cell-by-cell with gridlines (`design[]` layer); photos extractable headlessly. See "Design-fidelity pass" below.
+- ✅ **C — project persistence (IndexedDB)** (`src/store/db.ts` + `src/store/library.ts`). Templates library
+  (save/list/get/duplicate/delete, with a source-page thumbnail) and Projects (save/open in-progress catalogs =
+  DocumentIR + embedded assets). `App` autosaves the open catalog (debounced) with a "✓ נשמר" indicator;
+  `ImportScreen` is now a home/library showing saved templates (→ צור קטלוג) and in-progress projects (→ פתח),
+  each with open/duplicate/delete. Templates moved off localStorage onto IndexedDB (handles the large image data
+  URLs). Gate `npm run verify:persistence` (fake-indexeddb): save → simulate reopen → template + project still
+  there and round-trip; duplicate/delete work.
 - ✅ **B — generation-time auto-fit** (`src/catalog/autofit.ts`). Before opening/exporting, each text block is
   MEASURED vs its box and: font shrinks to an 85% floor → wraps → box grows within page bounds → else **flagged**
   (never silently clipped). `exportPdf` now WRAPS each line to the box width (matches the DOM editor) so long lines

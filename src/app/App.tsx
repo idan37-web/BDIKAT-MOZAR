@@ -9,6 +9,7 @@ import { GenerateScreen } from './GenerateScreen';
 import { PageView, type ViewMode } from './PageView';
 import { brandFont, ensureFontFace, FALLBACK_HEBREW, loadExportFont } from './brandFont';
 import { exportPdf } from '../pdf/exportPdf';
+import { saveProject } from '../store/library';
 
 const MODES: { id: ViewMode; label: string }[] = [
   { id: 'original', label: 'מקור' },
@@ -27,6 +28,21 @@ export function App() {
   const [editing, setEditing] = React.useState<string | null>(null);
   const [exporting, setExporting] = React.useState(false);
   const [exportErr, setExportErr] = React.useState<string | null>(null);
+  const [saveState, setSaveState] = React.useState<'idle' | 'saving' | 'saved'>('idle');
+  const templateIdRef = React.useRef<string | undefined>(undefined);
+
+  // Milestone C: autosave the in-progress catalog to IndexedDB (debounced). Saves on open
+  // too, so a freshly imported/generated catalog appears in the library right away.
+  React.useEffect(() => {
+    if (!doc) return;
+    setSaveState('saving');
+    const t = setTimeout(() => {
+      saveProject(doc, { templateId: templateIdRef.current })
+        .then(() => setSaveState('saved'))
+        .catch(() => setSaveState('idle'));
+    }, 600);
+    return () => clearTimeout(t);
+  }, [doc]);
 
   async function handleExport() {
     if (!doc || exporting) return;
@@ -51,11 +67,22 @@ export function App() {
   const bf = doc ? brandFont(doc.brand || '') : null;
   React.useEffect(() => { if (bf) ensureFontFace(bf); }, [bf]);
 
-  const openDoc = (d: DocumentIR) => { setDoc(d); setScreen('import'); setCur(0); setSel(null); setEditing(null); };
+  const openDoc = (d: DocumentIR, templateId?: string) => {
+    templateIdRef.current = templateId;
+    setDoc(d); setScreen('import'); setCur(0); setSel(null); setEditing(null);
+  };
   const goGenerate = (spec?: TemplateSpec) => { setGenSpec(spec || null); setScreen('generate'); };
   if (!doc && screen === 'learn') return <TemplateScreen onBack={() => setScreen('import')} onGenerate={goGenerate} />;
-  if (!doc && screen === 'generate') return <GenerateScreen initialSpec={genSpec} onCreate={openDoc} onBack={() => setScreen('import')} />;
-  if (!doc) return <ImportScreen onImported={openDoc} onLearnTemplate={() => setScreen('learn')} onGenerate={() => goGenerate()} />;
+  if (!doc && screen === 'generate') return <GenerateScreen initialSpec={genSpec} onCreate={(d) => openDoc(d, genSpec?.id)} onBack={() => setScreen('import')} />;
+  if (!doc) return (
+    <ImportScreen
+      onImported={openDoc}
+      onLearnTemplate={() => setScreen('learn')}
+      onGenerate={() => goGenerate()}
+      onOpenProject={(d) => openDoc(d)}
+      onUseTemplate={(spec) => goGenerate(spec)}
+    />
+  );
 
   const page = doc.pages[cur];
   const scale = Math.min(1, 880 / page.width);
@@ -85,6 +112,9 @@ export function App() {
           ))}
         </div>
         <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, color: saveState === 'saved' ? 'var(--ok, #0a7d3b)' : 'var(--ink-3)' }}>
+          {saveState === 'saving' ? 'שומר…' : saveState === 'saved' ? '✓ נשמר' : ''}
+        </span>
         {exportErr && <span style={{ color: 'var(--danger)', fontSize: 12 }} title={exportErr}>שגיאת ייצוא</span>}
         <button className="btn btn-sm" onClick={handleExport} disabled={exporting}
           style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', opacity: exporting ? 0.6 : 1 }}>

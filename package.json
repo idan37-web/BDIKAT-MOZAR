@@ -15,7 +15,8 @@
     "verify:milestone-a": "tsx scripts/verifyMilestoneA.mts",
     "verify:shapes": "tsx scripts/verifyShapes.mts",
     "verify:images": "tsx scripts/verifyImagesHeadless.mts",
-    "verify:autofit": "tsx scripts/verifyAutofit.mts"
+    "verify:autofit": "tsx scripts/verifyAutofit.mts",
+    "verify:persistence": "tsx scripts/verifyPersistence.mts"
   },
   "dependencies": {
     "@fontsource/heebo": "^5.2.8",
@@ -32,6 +33,7 @@
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.7.0",
+    "fake-indexeddb": "^6.2.5",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
