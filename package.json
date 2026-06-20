@@ -17,7 +17,8 @@
     "verify:images": "tsx scripts/verifyImagesHeadless.mts",
     "verify:autofit": "tsx scripts/verifyAutofit.mts",
     "verify:persistence": "tsx scripts/verifyPersistence.mts",
-    "verify:structured": "tsx scripts/verifyStructured.mts"
+    "verify:structured": "tsx scripts/verifyStructured.mts",
+    "verify:graphics": "tsx scripts/verifyGraphics.mts"
   },
   "dependencies": {
     "@fontsource/heebo": "^5.2.8",

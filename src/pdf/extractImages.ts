@@ -31,7 +31,15 @@ export interface ShapeOp {
   line?: boolean; // true = a stroked rule/gridline (render as a thin rect of `fill`)
 }
 
-export interface PageOps { images: ImageOp[]; shapes: ShapeOp[]; }
+/** A cluster of vector path ink (a logo, a QR/barcode, an icon row, a colour scale) that can't
+ * be reconstructed as primitives — it is rasterized from the page render into an image block. */
+export interface GraphicOp {
+  bbox: { x: number; y: number; width: number; height: number };
+  kind: 'logo' | 'qr' | 'scale' | 'graphic';
+  opCount: number;
+}
+
+export interface PageOps { images: ImageOp[]; shapes: ShapeOp[]; graphics: GraphicOp[]; }
 
 export type MakeCanvas = (w: number, h: number) => HTMLCanvasElement;
 
@@ -55,8 +63,26 @@ export async function walkPage(page: any, OPS: any, pageHeight: number): Promise
   let fill = '#000000';
   let strokeCol = '#000000';
   let pathBox: number[] | null = null; // [minX,minY,maxX,maxY] in path space (constructPath args[2])
+  let pathCurves = 0;                  // bezier segments in the current path (logo detector)
   const images: ImageOp[] = [];
   const shapes: ShapeOp[] = [];
+  // "graphic ink": small/curvy vector path boxes (top-left coords) → clustered into GraphicOps
+  const ink: { x: number; y: number; w: number; h: number; curves: number; colored: boolean }[] = [];
+  const isSat = (hex: string) => {
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex); if (!m) return false;
+    const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    return mx - mn > 40 && mx > 60; // a real colour (not gray/near-white/near-black)
+  };
+  const recordInk = (col: string) => {
+    if (!pathBox || pathBox.length !== 4) return;
+    const { minX, maxY, w, h } = xform(pathBox);
+    const maxDim = Math.max(w, h);
+    if (w <= 0 || h <= 0) return;
+    if (maxDim <= 130 || pathCurves >= 2) {
+      ink.push({ x: minX, y: pageHeight - maxY, w, h, curves: pathCurves, colored: isSat(col) });
+    }
+  };
   const isXObj = (fn: number) => fn === OPS.paintImageXObject || fn === OPS.paintJpegXObject || fn === OPS.paintImageXObjectRepeat;
   const isFill = (fn: number) => fn === OPS.fill || fn === OPS.eoFill;
   const isStroke = (fn: number) => fn === OPS.stroke || fn === OPS.closeStroke;
@@ -81,7 +107,11 @@ export async function walkPage(page: any, OPS: any, pageHeight: number): Promise
     else if (fn === OPS.setStrokeRGBColor) { const c = a as number[]; strokeCol = toHex(c[0], c[1], c[2]); }
     else if (fn === OPS.setStrokeGray) { const g = (a as number[])[0]; const v = g <= 1 ? g * 255 : g; strokeCol = toHex(v, v, v); }
     else if (fn === OPS.setStrokeCMYKColor) { const [c, m, y, k] = a as number[]; const [r, g, b] = cmykToRgb(c, m, y, k); strokeCol = toHex(r, g, b); }
-    else if (fn === OPS.constructPath) { pathBox = Array.isArray(a) ? (a[2] as number[]) : null; }
+    else if (fn === OPS.constructPath) {
+      pathBox = Array.isArray(a) ? (a[2] as number[]) : null;
+      const pops: number[] = Array.isArray(a) ? (a[0] as number[]) : [];
+      pathCurves = pops.reduce((n, o) => n + (o === OPS.curveTo || o === OPS.curveTo2 || o === OPS.curveTo3 ? 1 : 0), 0);
+    }
     else if (isFill(fn) || isFillStroke(fn)) {
       if (pathBox && pathBox.length === 4) {
         const { minX, maxY, w, h } = xform(pathBox);
@@ -89,8 +119,9 @@ export async function walkPage(page: any, OPS: any, pageHeight: number): Promise
         if (w >= 24 && h >= 10 && fill.toLowerCase() !== '#ffffff') {
           shapes.push({ opIndex: i, fill, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
         }
+        recordInk(fill);
       }
-      pathBox = null;
+      pathBox = null; pathCurves = 0;
     } else if (isStroke(fn)) {
       if (pathBox && pathBox.length === 4) {
         const { minX, maxY, w, h } = xform(pathBox);
@@ -103,9 +134,10 @@ export async function walkPage(page: any, OPS: any, pageHeight: number): Promise
           // a stroked rectangle outline (kept as a faint panel border via the line colour)
           shapes.push({ opIndex: i, fill: strokeCol, line: true, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: 1 } });
         }
+        recordInk(strokeCol);
       }
-      pathBox = null;
-    } else if (fn === OPS.endPath) { pathBox = null; }
+      pathBox = null; pathCurves = 0;
+    } else if (fn === OPS.endPath) { pathBox = null; pathCurves = 0; }
     else if (isXObj(fn) || fn === OPS.paintInlineImageXObject || fn === OPS.paintImageMaskXObject) {
       const pts = [apply(ctm, 0, 0), apply(ctm, 1, 0), apply(ctm, 1, 1), apply(ctm, 0, 1)];
       const xs = pts.map((p) => p[0]); const ys = pts.map((p) => p[1]);
@@ -118,7 +150,43 @@ export async function walkPage(page: any, OPS: any, pageHeight: number): Promise
       else images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, hadSMask: smaskActive });
     }
   }
-  return { images, shapes };
+  return { images, shapes, graphics: clusterGraphics(ink) };
+}
+
+type Ink = { x: number; y: number; w: number; h: number; curves: number; colored: boolean };
+
+/** Cluster nearby graphic ink into logo / qr / colour-scale / generic graphic regions. */
+function clusterGraphics(ink: Ink[]): GraphicOp[] {
+  if (!ink.length) return [];
+  const parent = ink.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const join = (i: number, j: number) => { parent[find(i)] = find(j); };
+  const near = (a: Ink, b: Ink) => {
+    const dx = Math.max(0, Math.max(a.x, b.x) - Math.min(a.x + a.w, b.x + b.w));
+    const dy = Math.max(0, Math.max(a.y, b.y) - Math.min(a.y + a.h, b.y + b.h));
+    return dx <= 14 && dy <= 14;
+  };
+  for (let i = 0; i < ink.length; i++) for (let j = i + 1; j < ink.length; j++) if (near(ink[i], ink[j])) join(i, j);
+  const groups = new Map<number, number[]>();
+  ink.forEach((_, i) => { const r = find(i); (groups.get(r) || groups.set(r, []).get(r)!).push(i); });
+  const out: GraphicOp[] = [];
+  for (const idxs of groups.values()) {
+    const bs = idxs.map((k) => ink[k]);
+    const x0 = Math.min(...bs.map((b) => b.x)), y0 = Math.min(...bs.map((b) => b.y));
+    const x1 = Math.max(...bs.map((b) => b.x + b.w)), y1 = Math.max(...bs.map((b) => b.y + b.h));
+    const w = x1 - x0, h = y1 - y0;
+    const count = bs.length;
+    const curves = bs.reduce((n, b) => n + b.curves, 0);
+    const colored = bs.filter((b) => b.colored).length;
+    const tiny = bs.filter((b) => Math.max(b.w, b.h) <= 20).length;
+    if (count < 4 || w < 8 || h < 8 || w > 520 || h > 520) continue; // stray paths / full-page washes out
+    let kind: GraphicOp['kind'] = 'graphic';
+    if (tiny >= 25 && w < 240 && h < 240 && Math.abs(w - h) < Math.max(w, h) * 0.6) kind = 'qr';
+    else if (colored >= 3 && w > h * 1.6) kind = 'scale';
+    else if (curves >= 8) kind = 'logo';
+    out.push({ bbox: { x: Math.round(x0), y: Math.round(y0), width: Math.round(w), height: Math.round(h) }, kind, opCount: count });
+  }
+  return out.sort((a, b) => b.bbox.width * b.bbox.height - a.bbox.width * a.bbox.height).slice(0, 12);
 }
 
 /** Back-compat thin wrapper (image-only callers). */

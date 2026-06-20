@@ -38,6 +38,33 @@ export function cropCanvas(canvas: HTMLCanvasElement, scale: number, x: number, 
 }
 
 /**
+ * Crop a VECTOR-GRAPHIC region (logo / QR / colour scale) out of the page raster as a sharp
+ * PNG, erasing overlapping text (numbers/labels) so they aren't baked twice — the real text
+ * blocks render on top. PNG (not JPEG) keeps logo/QR edges crisp.
+ */
+export function cropGraphic(
+  canvas: HTMLCanvasElement, scale: number,
+  rect: { x: number; y: number; width: number; height: number },
+  eraseRectsPoints: { x: number; y: number; width: number; height: number }[],
+): string {
+  const sx = Math.max(0, Math.round(rect.x * scale));
+  const sy = Math.max(0, Math.round(rect.y * scale));
+  const sw = Math.min(canvas.width - sx, Math.round(rect.width * scale));
+  const sh = Math.min(canvas.height - sy, Math.round(rect.height * scale));
+  if (sw <= 2 || sh <= 2) return '';
+  const c = document.createElement('canvas'); c.width = sw; c.height = sh;
+  const ctx = c.getContext('2d'); if (!ctx) return '';
+  ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  ctx.fillStyle = '#ffffff';
+  for (const e of eraseRectsPoints) {
+    const ex = Math.round(e.x * scale) - sx - 1;
+    const ey = Math.round(e.y * scale) - sy - 1;
+    ctx.fillRect(ex, ey, Math.round(e.width * scale) + 2, Math.round(e.height * scale) + 2);
+  }
+  return c.toDataURL('image/png');
+}
+
+/**
  * LAST-RESORT fallback only: crop the region but ERASE (white-out) any overlapping text
  * rectangles so the crop can NEVER carry text. Used only when no clean image source
  * exists; the caller must log loudly (it means image resolution has a gap to close).

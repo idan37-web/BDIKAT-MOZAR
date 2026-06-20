@@ -2,7 +2,7 @@
 // The imported IR — never IMPORT3008/IMPORTC3 — is the source of truth after upload.
 import type { BBox, DocumentIR, PageIR, ImageBlockIR, ShapeBlockIR } from '../types/catalog';
 import { extractTextBlocks } from './extractLayout';
-import { renderPageCanvas, cropCanvasErasingText } from './renderPage';
+import { renderPageCanvas, cropCanvasErasingText, cropGraphic } from './renderPage';
 import { walkPage, resolveImage, type ShapeOp, type MakeCanvas } from './extractImages';
 
 let workerConfigured = false;
@@ -48,7 +48,7 @@ export async function importPdf(
     // so design panels/strips are captured even in a headless (renderPreviews:false) import.
     // Running it BEFORE text extraction also populates page.commonObjs with the fonts, so we
     // can resolve each item's REAL font name (→ correct bold detection).
-    const { images: imageOps, shapes: shapeOps } = await walkPage(page, (pdfjs as any).OPS, vp.height);
+    const { images: imageOps, shapes: shapeOps, graphics: graphicOps } = await walkPage(page, (pdfjs as any).OPS, vp.height);
 
     const resolveFontName = (loadedName?: string): string | undefined => {
       if (!loadedName) return undefined;
@@ -95,6 +95,28 @@ export async function importPdf(
           rotation: 0, zIndex: op.opIndex, source: 'original',
           originalBBox: { x: op.bbox.x, y: op.bbox.y, width: op.bbox.width, height: op.bbox.height },
           src, originalImageRef: src, fit: 'cover',
+        });
+      }
+
+      // Vector graphics (logos / QR / colour scales) can't be rebuilt as primitives → rasterize
+      // each detected region from the page render to a sharp PNG. We BAKE the whole region (so a
+      // scale's white-on-colour numbers keep their real colour) and then drop the now-redundant
+      // text runs fully inside it, to avoid doubling. Browser-only (needs the page canvas).
+      if (rendered) {
+        const within = (t: { x: number; y: number; width: number; height: number }, b: typeof t) =>
+          t.x >= b.x - 1 && t.y >= b.y - 1 && t.x + t.width <= b.x + b.width + 1 && t.y + t.height <= b.y + b.height + 1;
+        graphicOps.forEach((g, gi) => {
+          const src = cropGraphic(rendered!.canvas, rendered!.scale, g.bbox, []);
+          if (!src) return;
+          imageBlocks.push({
+            id: `${id}_gfx${gi}`, type: 'image', x: g.bbox.x, y: g.bbox.y, width: g.bbox.width, height: g.bbox.height,
+            rotation: 0, zIndex: 900_000 + gi, source: 'original',
+            originalBBox: { x: g.bbox.x, y: g.bbox.y, width: g.bbox.width, height: g.bbox.height },
+            src, originalImageRef: src, fit: 'contain',
+          });
+          // only a colour scale bakes its own (white-on-colour) numbers → drop those text runs;
+          // logos/QR/generic graphics carry no real text, so never remove editable text under them.
+          if (g.kind === 'scale') for (const t of textBlocks) if (within(t, g.bbox)) t.deleted = true;
         });
       }
     }

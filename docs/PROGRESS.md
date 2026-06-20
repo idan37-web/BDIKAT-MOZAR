@@ -80,9 +80,15 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   RGBA (→PNG) and an opaque RGB whose masked-out bg is BLACK (→JPEG); keeping the black one made black boxes
   around cut-out cars. Dedupe overlapping image ops, preferring the alpha PNG. Gate: `verify:images` asserts
   no two image blocks overlap >0.8 IoU. Pixel-confirmed on Berlingo (side-view cars, no black boxes).
-- DEFERRED (next round): extracting VECTOR brand logos, QR/barcode graphics, and the colour bars of the
-  pollution/safety-rating tables (they're vector/shape graphics not yet captured; the user can add/ignore
-  manually for now).
+- **Vector-graphics extraction** (`extractImages.walkPage` → `GraphicOp[]`, rasterized in `importPdf`):
+  brand LOGOS (filled bezier curves), QR/barcodes (hundreds of tiny squares) and the colour SCALE bars of
+  the pollution/safety-rating tables can't be rebuilt as primitives, so we cluster their "graphic ink"
+  (small/curvy path boxes, not panels/gridlines) into regions, classify them (logo/qr/scale/graphic), and
+  rasterize each from the page render to a sharp PNG (`renderPage.cropGraphic`). The whole region is baked
+  (a scale keeps its white-on-colour numbers) and a scale's now-redundant text runs are dropped to avoid
+  doubling. Browser-only (needs the page canvas); zIndex sits above photos, below text. Gate
+  `npm run verify:graphics` asserts logo+QR+scale detection on the C5 Aircross. Region content
+  pixel-confirmed (the safety 0–8 colour bar + arrow, the QR, the Citroën wordmark).
 
 ## CRITICAL GOTCHAS (hard-won — do not regress)
 -1. **Bold + transparent-image (browser) fixes.** (a) **Bold**: pdf.js text items carry an internal
