@@ -7,7 +7,7 @@ import { deflateRawSync } from 'node:zlib';
 import { importPdf } from '../src/pdf/importPdf';
 import { learnTemplate } from '../src/templates/templateLearning';
 import { exportPdf } from '../src/pdf/exportPdf';
-import { isTextBlock } from '../src/types/catalog';
+import { isTableBlock } from '../src/types/catalog';
 import type { DocumentIR } from '../src/types/catalog';
 import { peugeot3008Sheet } from '../src/data/samples';
 import { sheetStats } from '../src/data/specModel';
@@ -125,11 +125,26 @@ const measure = (t: string, s: number) => probeFont.widthOfTextAtSize(t, s);
 const res = mapSheetToCatalog(tpl, sheet, { measure, title: 'בדיקת נתונים מובנים' });
 expect('catalog has one page per template page', res.doc.pages.length === tpl.pages.length);
 
-const allText = res.doc.pages.flatMap((p) => p.blocks.filter(isTextBlock));
-expect('spec value from sheet present (453.5)', allText.some((b) => b.text.includes('453.5')));
-expect('spec value from sheet present (1,199)', allText.some((b) => b.text.includes('1,199')));
-expect('trim header GT present on spec page', allText.some((b) => b.text === 'GT'));
-expect('section title rendered (מידות)', allText.some((b) => b.text.includes('מידות')));
+// spec is now a first-class editable TableBlockIR
+const tables = res.doc.pages.flatMap((p) => p.blocks.filter(isTableBlock));
+const tableText = tables.flatMap((t) => t.rows.flatMap((r) => r.cells)).join('|');
+expect('a TableBlockIR was generated for the spec', tables.length > 0);
+expect('spec value from sheet present (453.5)', tableText.includes('453.5'));
+expect('spec value from sheet present (1,199)', tableText.includes('1,199'));
+expect('trim header GT present in the table', tables.some((t) => t.rows[0]?.cells.includes('GT')));
+expect('section row rendered (מידות)', tables.some((t) => t.rows.some((r) => r.kind === 'section' && r.cells[0].includes('מידות'))));
+expect('table height matches rows*rowHeight', tables.every((t) => Math.abs(t.height - t.rows.length * t.rowHeight) < 0.5));
+
+// manual edit: change a cell value and add a row (the editor's add/remove path)
+const t0 = tables[0];
+const before = t0.rows.length;
+const dataRow = t0.rows.find((r) => r.kind === 'data')!;
+dataRow.cells[1] = '999';
+t0.rows.splice(t0.rows.length, 0, { kind: 'data', cells: new Array(t0.columns).fill('NEW') });
+t0.height = t0.rows.length * t0.rowHeight;
+expect('cell edit applied', t0.rows.find((r) => r.kind === 'data')!.cells[1] === '999');
+expect('row added', t0.rows.length === before + 1);
+
 expect('model-name mapped from sheet', res.mappings.some((m) => m.kind === 'model-name' && m.status === 'mapped'));
 expect('marketing-text mapped from sheet', res.mappings.some((m) => m.kind === 'marketing-text' && m.status === 'mapped'));
 expect('hero image surfaced for manual entry', res.manual.some((m) => m.kind === 'hero-image'));

@@ -8,7 +8,7 @@ import type { TemplateSpec, TemplatePageSpec, SlotKind } from '../templates/temp
 import { generateCatalog, type BindingMap, type SlotBinding } from '../catalog/generateCatalog';
 import type { SpecSheet } from './specModel';
 import { sheetStats } from './specModel';
-import { layoutSpecTable, layoutFeatures, layoutColors, type LayoutStyle } from './specToBlocks';
+import { buildSpecTable, layoutFeatures, layoutColors, type LayoutStyle } from './specToBlocks';
 import type { Measure } from '../catalog/autofit';
 
 export type MapStatus = 'mapped' | 'manual';
@@ -110,14 +110,18 @@ export function mapSheetToCatalog(spec: TemplateSpec, sheet: SpecSheet, opts: Ma
   spec.pages.forEach((tp, pi) => {
     const page = doc.pages[pi];
     const region = denseRegion(tp);
-    const base = tp.slots.find((s) => s.style?.fontSize)?.style?.fontSize || (tp.role === 'spec' ? 9 : 10);
+    // base font = the SMALLEST styled font on the page (spec/feature text is the small print),
+    // clamped — never a big heading slot, which would inflate the row height.
+    const fontSizes = tp.slots.map((s) => s.style?.fontSize).filter((n): n is number => typeof n === 'number' && n > 0);
+    const minFont = fontSizes.length ? Math.min(...fontSizes) : (tp.role === 'spec' ? 9 : 10);
+    const base = Math.max(7, Math.min(tp.role === 'spec' ? 11 : 12, minFont));
 
     if (SPEC_ROLES.has(tp.role) && stats.rows > 0) {
       const st = styleFrom(spec, base);
-      const lay = layoutSpecTable(sheet, region, st, { title: 'מפרט טכני', measure, minScale: 0.75 });
-      page.blocks = [...designShapesOf(page, tp), ...lay.blocks];
+      const table = buildSpecTable(sheet, region, st);
+      page.blocks = [...designShapesOf(page, tp), table];
       mappings.push({ label: 'מפרט טכני', kind: 'spec', pageIndex: tp.index, status: 'mapped', detail: `${stats.rows} שורות · ${stats.trims} גרסאות` });
-      if (lay.overflowRows > 0) warnings.push(`עמוד ${tp.index + 1}: ${lay.overflowRows} שורות מפרט לא נכנסו (דורש המשך/הקטנה).`);
+      if (table.height > region.height + 1) warnings.push(`עמוד ${tp.index + 1}: טבלת המפרט גבוהה מהאזור (${Math.round(table.height)} > ${Math.round(region.height)}).`);
     } else if (COLOR_ROLES.has(tp.role) && (stats.colors > 0 || stats.wheels > 0)) {
       const st = styleFrom(spec, base);
       const lay = layoutColors(sheet, region, st);

@@ -1,12 +1,12 @@
 // New structured-model app. Stage 2: import. Stage 3: IR-as-truth editor with a
 // textarea overlay and Original/Editable/Reconstructed/Compare view modes.
 import React from 'react';
-import type { DocumentIR, TextBlockIR, ImageBlockIR, BlockIR } from '../types/catalog';
+import type { DocumentIR, TextBlockIR, ImageBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
 import type { TemplateSpec } from '../templates/templateSpec';
 import { ImportScreen } from './ImportScreen';
 import { TemplateScreen } from './TemplateScreen';
 import { GenerateScreen } from './GenerateScreen';
-import { PageView, type ViewMode } from './PageView';
+import { PageView, type ViewMode, type CellRef } from './PageView';
 import { brandFont, ensureFontFace, FALLBACK_HEBREW, loadExportFont } from './brandFont';
 import { exportPdf } from '../pdf/exportPdf';
 import { saveProject } from '../store/library';
@@ -26,6 +26,7 @@ export function App() {
   const [mode, setMode] = React.useState<ViewMode>('editable');
   const [sel, setSel] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState<string | null>(null);
+  const [editingCell, setEditingCell] = React.useState<CellRef | null>(null);
   const [exporting, setExporting] = React.useState(false);
   const [exportErr, setExportErr] = React.useState<string | null>(null);
   const [saveState, setSaveState] = React.useState<'idle' | 'saving' | 'saved'>('idle');
@@ -90,6 +91,7 @@ export function App() {
   const selAny = page.blocks.find((b) => b.id === sel);
   const selBlock = selAny?.type === 'text' ? (selAny as TextBlockIR) : undefined;
   const selImage = selAny?.type === 'image' ? (selAny as ImageBlockIR) : undefined;
+  const selTable = selAny?.type === 'table' ? (selAny as TableBlockIR) : undefined;
 
   const patchBlock = (id: string, patch: Partial<BlockIR> & Record<string, unknown>) => {
     setDoc((d) => !d ? d : {
@@ -100,6 +102,65 @@ export function App() {
       }),
     });
   };
+
+  // resize: tables keep height == rows*rowHeight, so recompute rowHeight on a vertical drag
+  const handleResize = (id: string, box: { x: number; y: number; width: number; height: number }) => {
+    const b = page.blocks.find((x) => x.id === id);
+    if (b?.type === 'table') {
+      const t = b as TableBlockIR;
+      const rh = t.rows.length ? Math.max(8, box.height / t.rows.length) : t.rowHeight;
+      patchBlock(id, { ...box, rowHeight: rh, fontSize: Math.min(t.fontSize, rh / 1.5) });
+    } else patchBlock(id, box);
+  };
+
+  // update a TableBlockIR's rows immutably, keeping height in sync
+  const patchTable = (id: string, fn: (t: TableBlockIR) => TableBlockIR) => {
+    setDoc((d) => !d ? d : {
+      ...d,
+      pages: d.pages.map((p, i) => i !== cur ? p : {
+        ...p,
+        blocks: p.blocks.map((b) => {
+          if (b.id !== id || b.type !== 'table') return b;
+          const t = fn(structuredClone(b as TableBlockIR));
+          t.height = t.rows.length * t.rowHeight;
+          t.dirty = true;
+          return t;
+        }),
+      }),
+    });
+  };
+  const setCell = (ref: CellRef, text: string) => patchTable(ref.tableId, (t) => {
+    if (t.rows[ref.r]) t.rows[ref.r].cells[ref.c] = text;
+    return t;
+  });
+  const addRowAfter = (id: string, r: number) => patchTable(id, (t) => {
+    const cells = new Array(t.columns).fill('');
+    t.rows.splice(r + 1, 0, { kind: 'data', cells });
+    return t;
+  });
+  const addSectionAfter = (id: string, r: number) => patchTable(id, (t) => {
+    t.rows.splice(r + 1, 0, { kind: 'section', cells: ['קטגוריה חדשה'] });
+    return t;
+  });
+  const removeRow = (id: string, r: number) => patchTable(id, (t) => {
+    if (t.rows.length > 1) t.rows.splice(r, 1);
+    return t;
+  });
+  const addTrim = (id: string) => patchTable(id, (t) => {
+    t.columns += 1;
+    const trimFrac = (1 - t.colFractions[0]) / (t.columns - 1);
+    t.colFractions = [t.colFractions[0], ...new Array(t.columns - 1).fill(trimFrac)];
+    for (const row of t.rows) { if (row.kind !== 'section') row.cells.push(row.kind === 'header' ? `גרסה ${t.columns - 1}` : ''); }
+    return t;
+  });
+  const removeTrim = (id: string) => patchTable(id, (t) => {
+    if (t.columns <= 2) return t; // keep at least label + 1 trim
+    t.columns -= 1;
+    const trimFrac = (1 - t.colFractions[0]) / (t.columns - 1);
+    t.colFractions = [t.colFractions[0], ...new Array(t.columns - 1).fill(trimFrac)];
+    for (const row of t.rows) { if (row.kind !== 'section') row.cells.pop(); }
+    return t;
+  });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -139,11 +200,15 @@ export function App() {
           <PageView
             page={page} scale={scale} mode={mode} fontFamily={brandFamily}
             selectedId={sel} editingId={editing}
-            onSelect={(id) => { setSel(id); if (editing && editing !== id) setEditing(null); }}
+            onSelect={(id) => { setSel(id); if (editing && editing !== id) setEditing(null); setEditingCell(null); }}
             onStartEdit={(id) => { setSel(id); setEditing(id); }}
             onChangeText={(id, text) => patchBlock(id, { text })}
-            onResize={(id, box) => patchBlock(id, box)}
+            onResize={handleResize}
             onCommit={() => setEditing(null)}
+            editingCell={editingCell}
+            onStartEditCell={(ref) => { setSel(ref.tableId); setEditingCell(ref); }}
+            onChangeCell={(ref, text) => setCell(ref, text)}
+            onCommitCell={() => setEditingCell(null)}
           />
         </div>
 
@@ -184,8 +249,45 @@ export function App() {
               </div>
               <button className="btn btn-ghost btn-sm" onClick={() => { const o = selImage.originalBBox; patchBlock(selImage.id, { src: selImage.originalImageRef || selImage.src, fit: 'cover', ...(o ? { x: o.x, y: o.y, width: o.width, height: o.height } : {}) }); }}>איפוס</button>
             </div>
+          ) : selTable ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ fontWeight: 800 }}>טבלת מפרט</div>
+              <p style={{ fontSize: 12.5, color: 'var(--ink-2)', margin: 0 }}>
+                דאבל-קליק על תא לעריכה ידנית. {selTable.rows.length} שורות · {selTable.columns - 1} גרסאות.
+              </p>
+              <label style={{ fontSize: 12, fontWeight: 700 }}>גודל גופן: {Math.round(selTable.fontSize)}
+                <input type="range" min={5} max={20} step={0.5} value={selTable.fontSize}
+                  onChange={(e) => patchBlock(selTable.id, { fontSize: +e.target.value })} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+              </label>
+              <label style={{ fontSize: 12, fontWeight: 700 }}>גובה שורה: {Math.round(selTable.rowHeight)}
+                <input type="range" min={9} max={40} step={1} value={selTable.rowHeight}
+                  onChange={(e) => { const rh = +e.target.value; patchTable(selTable.id, (t) => { t.rowHeight = rh; return t; }); }} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+              </label>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>שורות</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => { const r = editingCell?.tableId === selTable.id ? editingCell.r : selTable.rows.length - 1; addRowAfter(selTable.id, r); }}>+ שורת נתון</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => { const r = editingCell?.tableId === selTable.id ? editingCell.r : selTable.rows.length - 1; addSectionAfter(selTable.id, r); }}>+ קטגוריה</button>
+                </div>
+                {editingCell?.tableId === selTable.id && (
+                  <button className="btn btn-ghost btn-sm" style={{ marginTop: 8, color: 'var(--danger)' }} onClick={() => { removeRow(selTable.id, editingCell.r); setEditingCell(null); }}>מחק שורה נבחרת (#{editingCell.r + 1})</button>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>עמודות גרסה</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => addTrim(selTable.id)}>+ גרסה</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => removeTrim(selTable.id)} disabled={selTable.columns <= 2}>– גרסה</button>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, flex: 1 }}>רוחב
+                  <input type="number" value={Math.round(selTable.width)} onChange={(e) => patchBlock(selTable.id, { width: +e.target.value })} style={{ width: '100%', marginTop: 4, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)' }} />
+                </label>
+              </div>
+            </div>
           ) : !selBlock ? (
-            <p style={{ color: 'var(--ink-3)', fontSize: 13 }}>בחר אלמנט (קליק) — טקסט או תמונה. דאבל-קליק על טקסט לעריכה.</p>
+            <p style={{ color: 'var(--ink-3)', fontSize: 13 }}>בחר אלמנט (קליק) — טקסט, תמונה או טבלה. דאבל-קליק לעריכה.</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ fontWeight: 800 }}>תיבת טקסט</div>

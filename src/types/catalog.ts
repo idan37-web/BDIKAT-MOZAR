@@ -94,6 +94,34 @@ export interface ShapeBlockIR extends BlockIR {
   radius?: number;
 }
 
+/** One row of a TableBlockIR. `data`/`header` rows carry one cell per column (logical order:
+ * index 0 = label column); a `section` row is a single full-width title that spans all columns. */
+export interface TableRowIR {
+  kind: 'header' | 'section' | 'data';
+  cells: string[];
+}
+
+/** A first-class, editable spec table (Milestone D). Columns are in LOGICAL order
+ * (index 0 = label); RTL rendering places column 0 on the RIGHT. It flattens to vector
+ * text + gridlines on export, but stays a structured object so cells/rows are editable. */
+export interface TableBlockIR extends BlockIR {
+  type: 'table';
+  /** total columns including the label column. */
+  columns: number;
+  /** width of each column as a fraction of the block width, LOGICAL order (sums ~1). */
+  colFractions: number[];
+  rows: TableRowIR[];
+  /** points; block height is kept == rows.length * rowHeight. */
+  rowHeight: number;
+  fontFamily: string;
+  fontSize: number;
+  color: string;
+  headingColor?: string;
+  gridColor?: string;
+  direction: TextDirection;
+  embeddedFontRef?: EmbeddedFontRef;
+}
+
 export interface PageIR {
   id: string;
   /** PDF points. */
@@ -117,3 +145,12 @@ export interface DocumentIR {
 export const isTextBlock = (b: BlockIR): b is TextBlockIR => b.type === 'text';
 export const isImageBlock = (b: BlockIR): b is ImageBlockIR => b.type === 'image';
 export const isShapeBlock = (b: BlockIR): b is ShapeBlockIR => b.type === 'shape' || b.type === 'background';
+export const isTableBlock = (b: BlockIR): b is TableBlockIR => b.type === 'table';
+
+/** Left edge (fraction 0..1 from the block's left) of a column in RTL layout — column 0
+ * (label) sits on the RIGHT. Shared by render + export so they never diverge. */
+export function columnLeftFraction(colFractions: number[], i: number): number {
+  let f = 1;
+  for (let k = 0; k <= i; k++) f -= colFractions[k] || 0;
+  return Math.max(0, f);
+}

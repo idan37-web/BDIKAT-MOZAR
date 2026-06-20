@@ -3,7 +3,7 @@
 // hard-won RTL vector export and the editor render the table with ZERO new code paths. The
 // table is still data-driven: rows come from the sheet, so adding/removing a row = edit the
 // sheet and regenerate. Layout is RTL: the label column sits on the RIGHT, value columns to its left.
-import type { BBox, BlockIR, ShapeBlockIR, TextBlockIR, TextAlign } from '../types/catalog';
+import type { BBox, BlockIR, ShapeBlockIR, TextBlockIR, TableBlockIR, TableRowIR, TextAlign } from '../types/catalog';
 import type { SpecSheet, FeatureCategory } from './specModel';
 import { wrapText, type Measure } from '../catalog/autofit';
 
@@ -167,6 +167,54 @@ export function layoutSpecTable(
   overflow = Math.max(0, units.length - placed);
 
   return { blocks, bottom: colTop + (usablePerCol + 1) * rh, overflowRows: overflow, usedFontSize: size };
+}
+
+/** Keep a table's box height in sync with its rows (called after add/remove row). */
+export function syncTableHeight(t: TableBlockIR): void {
+  t.height = t.rows.length * t.rowHeight;
+}
+
+/**
+ * Build a first-class, editable spec table (single rectangular grid) from the sheet:
+ * a header row (trim names), then per section a full-width title row + its data rows.
+ * Columns (logical order): 0 = label, 1..n = trims. Row height fits the region.
+ */
+export function buildSpecTable(sheet: SpecSheet, region: BBox, st: LayoutStyle): TableBlockIR {
+  const nTrims = Math.max(1, sheet.trims.length);
+  const columns = 1 + nTrims;
+  const rows: TableRowIR[] = [];
+  rows.push({ kind: 'header', cells: ['', ...sheet.trims] });
+  for (const sec of sheet.sections) {
+    rows.push({ kind: 'section', cells: [sec.title] });
+    for (const r of sec.rows) {
+      const label = r.unit ? `${r.label} (${r.unit})` : r.label;
+      rows.push({ kind: 'data', cells: [label, ...r.values.slice(0, nTrims)] });
+    }
+  }
+
+  const base = st.fontSize;
+  const lh = st.lineHeight || 1.2;
+  const prefRh = Math.max(base * lh * 1.4, base + 5);
+  const minRh = Math.max(9, base * 0.7 + 1);
+  const rowHeight = Math.max(minRh, Math.min(prefRh, region.height / Math.max(1, rows.length)));
+
+  // a moderate width (label + trim columns) right-aligned in the region; the user can widen/move it
+  const width = Math.min(region.width, 230 + nTrims * 130);
+  const x = region.x + region.width - width; // RTL: hug the right edge
+  const labelFrac = nTrims >= 2 ? 0.46 : 0.62;
+  const trimFrac = (1 - labelFrac) / nTrims;
+  const colFractions = [labelFrac, ...new Array(nTrims).fill(trimFrac)];
+
+  return {
+    id: uid('table'), type: 'table',
+    x, y: region.y, width, height: rows.length * rowHeight,
+    rotation: 0, zIndex: 200, source: 'generated',
+    originalBBox: { x, y: region.y, width, height: rows.length * rowHeight },
+    columns, colFractions, rows, rowHeight,
+    fontFamily: st.fontFamily, fontSize: Math.min(base, rowHeight / 1.5),
+    color: st.color, headingColor: st.headingColor || st.color, gridColor: st.gridColor || '#d7dade',
+    direction: 'rtl',
+  };
 }
 
 /** Lay out the equipment/feature categories as titled lists with a ✓ per trim. */

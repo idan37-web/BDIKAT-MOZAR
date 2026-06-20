@@ -10,8 +10,8 @@ import {
 import fontkit from '@pdf-lib/fontkit';
 import { logicalToVisual } from './hebrew';
 import { wrapText } from '../catalog/autofit';
-import type { DocumentIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, BlockIR } from '../types/catalog';
-import { isTextBlock, isImageBlock, isShapeBlock } from '../types/catalog';
+import type { DocumentIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
+import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction } from '../types/catalog';
 
 function hexToRgb(hex: string): RGB {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
@@ -134,6 +134,64 @@ function drawTextBlock(page: PDFPage, pageH: number, tb: TextBlockIR, font: Awai
   }
 }
 
+type EmbeddedFont = Awaited<ReturnType<PDFDocument['embedFont']>>;
+
+/** Draw a single visual-ordered line, glyph-by-glyph at explicit x (defeats viewer re-bidi). */
+function drawVisualLine(page: PDFPage, xStart: number, y: number, visual: string, size: number, font: EmbeddedFont, color: RGB): void {
+  let cx = xStart;
+  for (const ch0 of visual) {
+    const ch = ch0 === '׳' ? "'" : ch0 === '״' ? '"' : ch0;
+    const w = font.widthOfTextAtSize(ch, size);
+    if (ch !== ' ') { try { page.drawText(ch, { x: cx, y, size, font, color }); } catch { /* skip */ } }
+    cx += w;
+  }
+}
+
+/** Draw a TableBlockIR as vector cells + gridlines (matches the editor's grid). */
+function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: EmbeddedFont): void {
+  const color = hexToRgb(tb.color);
+  const heading = hexToRgb(tb.headingColor || tb.color);
+  const grid = hexToRgb(tb.gridColor || '#d7dade');
+  const pad = 3;
+  const cellText = (text: string, cellX: number, cellW: number, rowTop: number, align: 'end' | 'center', size: number, col: RGB, bold?: boolean) => {
+    if (!text) return;
+    const visual = logicalToVisual(text, 'rtl');
+    const tw = font.widthOfTextAtSize(visual, size);
+    const xStart = align === 'center' ? cellX + (cellW - tw) / 2 : cellX + cellW - pad - tw;
+    const y = pageH - rowTop - tb.rowHeight / 2 - size * 0.34;
+    drawVisualLine(page, xStart, y, visual, size, font, col);
+    if (bold) drawVisualLine(page, xStart + 0.3, y, visual, size, font, col); // faux-bold
+  };
+
+  for (let r = 0; r < tb.rows.length; r++) {
+    const row = tb.rows[r];
+    const rowTop = tb.y + r * tb.rowHeight;
+    const size = tb.fontSize;
+    if (row.kind === 'section') {
+      cellText(row.cells[0] || '', tb.x, tb.width, rowTop, 'end', size, heading, true);
+    } else {
+      for (let i = 0; i < tb.columns; i++) {
+        const leftFrac = columnLeftFraction(tb.colFractions, i);
+        const cellX = tb.x + leftFrac * tb.width;
+        const cellW = (tb.colFractions[i] || 0) * tb.width;
+        const text = row.cells[i] ?? '';
+        const isLabel = i === 0;
+        const head = row.kind === 'header';
+        cellText(text, cellX, cellW, rowTop, isLabel ? 'end' : 'center', size, head ? heading : color, head);
+      }
+    }
+    // horizontal rule under the row
+    const ry = pageH - (rowTop + tb.rowHeight);
+    page.drawRectangle({ x: tb.x, y: ry, width: tb.width, height: 0.4, color: grid });
+  }
+  // vertical separators between columns (boundary = left edge of the right-hand column)
+  const top = pageH - tb.y;
+  for (let i = 1; i < tb.columns; i++) {
+    const bx = tb.x + columnLeftFraction(tb.colFractions, i - 1) * tb.width;
+    page.drawRectangle({ x: bx, y: top - tb.height, width: 0.4, height: tb.height, color: grid });
+  }
+}
+
 export async function exportPdf(doc: DocumentIR, fontBytes: Uint8Array): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
@@ -151,6 +209,8 @@ export async function exportPdf(doc: DocumentIR, fontBytes: Uint8Array): Promise
       } else if (isImageBlock(b)) {
         const img = await embedImage(pdf, b.src, imgCache);
         drawImageBlock(p, page.height, b, img);
+      } else if (isTableBlock(b)) {
+        drawTableBlock(p, page.height, b, font);
       } else if (isTextBlock(b)) {
         drawTextBlock(p, page.height, b, font);
       }

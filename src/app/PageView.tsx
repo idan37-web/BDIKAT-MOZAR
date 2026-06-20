@@ -1,9 +1,11 @@
 // Mode-aware page canvas. IR is the source of truth.
 //  - original/compare show the reference raster; editable/reconstructed render from IR.
 import { useRef } from 'react';
-import type { PageIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, BlockIR } from '../types/catalog';
-import { isTextBlock, isImageBlock, isShapeBlock } from '../types/catalog';
+import type { PageIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
+import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction } from '../types/catalog';
 import { TextEditOverlay } from '../editor/TextEditOverlay';
+
+export interface CellRef { tableId: string; r: number; c: number; }
 
 export type ViewMode = 'original' | 'editable' | 'reconstructed' | 'compare';
 
@@ -19,11 +21,16 @@ interface Props {
   onChangeText?: (id: string, text: string) => void;
   onResize?: (id: string, box: { x: number; y: number; width: number; height: number }) => void;
   onCommit?: () => void;
+  // table cell editing
+  editingCell?: CellRef | null;
+  onStartEditCell?: (ref: CellRef) => void;
+  onChangeCell?: (ref: CellRef, text: string) => void;
+  onCommitCell?: () => void;
 }
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se';
 
-export function PageView({ page, scale, mode, fontFamily, selectedId, editingId, onSelect, onStartEdit, onChangeText, onResize, onCommit }: Props) {
+export function PageView({ page, scale, mode, fontFamily, selectedId, editingId, onSelect, onStartEdit, onChangeText, onResize, onCommit, editingCell, onStartEditCell, onChangeCell, onCommitCell }: Props) {
   const w = page.width * scale;
   const h = page.height * scale;
   const showRaster = mode === 'original' || mode === 'compare';
@@ -100,6 +107,66 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, editingId,
               cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
               outline: selected ? '1.5px solid var(--accent)' : 'none',
             }} />
+        );
+      })}
+
+      {/* table blocks (editable spec grid) */}
+      {showBlocks && page.blocks.filter(isTableBlock).map((b: TableBlockIR) => {
+        const selected = selectedId === b.id;
+        const rh = b.rows.length ? b.height / b.rows.length : b.rowHeight;
+        return (
+          <div key={b.id}
+            onMouseDown={interactive ? (e) => startMove(b, e) : undefined}
+            style={{
+              position: 'absolute', left: b.x * scale, top: b.y * scale, width: b.width * scale, height: b.height * scale,
+              opacity: compare ? 0.6 : 1, cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
+              outline: selected ? '1.5px solid var(--accent)' : 'none', background: 'transparent',
+            }}>
+            {b.rows.map((row, r) => {
+              const top = r * rh * scale;
+              if (row.kind === 'section') {
+                return (
+                  <div key={r} dir="rtl" onDoubleClick={interactive ? (e) => { e.stopPropagation(); onStartEditCell?.({ tableId: b.id, r, c: 0 }); } : undefined}
+                    style={{ position: 'absolute', left: 0, top, width: b.width * scale, height: rh * scale,
+                      display: 'flex', alignItems: 'center', justifyContent: 'flex-start', padding: `0 ${3 * scale}px`,
+                      fontFamily: fontFamily || b.fontFamily, fontSize: b.fontSize * scale, fontWeight: 700,
+                      color: compare ? 'rgba(20,40,120,.55)' : (b.headingColor || b.color), borderBottom: `${Math.max(0.5, 0.6 * scale)}px solid ${b.gridColor || '#d7dade'}`, overflow: 'hidden' }}>
+                    {editingCell && editingCell.tableId === b.id && editingCell.r === r ? (
+                      <input autoFocus dir="rtl" defaultValue={row.cells[0] || ''}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onChange={(e) => onChangeCell?.({ tableId: b.id, r, c: 0 }, e.target.value)}
+                        onBlur={() => onCommitCell?.()} onKeyDown={(e) => { if (e.key === 'Enter') onCommitCell?.(); }}
+                        style={{ width: '100%', font: 'inherit', color: 'inherit', border: '1px solid var(--accent)', background: '#fff', padding: 0 }} />
+                    ) : row.cells[0]}
+                  </div>
+                );
+              }
+              return Array.from({ length: b.columns }).map((_, c) => {
+                const leftFrac = columnLeftFraction(b.colFractions, c);
+                const cw = (b.colFractions[c] || 0) * b.width;
+                const isLabel = c === 0;
+                const editingThis = editingCell && editingCell.tableId === b.id && editingCell.r === r && editingCell.c === c;
+                return (
+                  <div key={c} dir="rtl" onDoubleClick={interactive ? (e) => { e.stopPropagation(); onStartEditCell?.({ tableId: b.id, r, c }); } : undefined}
+                    style={{ position: 'absolute', left: leftFrac * b.width * scale, top, width: cw * scale, height: rh * scale,
+                      display: 'flex', alignItems: 'center', justifyContent: isLabel ? 'flex-start' : 'center', padding: `0 ${3 * scale}px`,
+                      fontFamily: fontFamily || b.fontFamily, fontSize: b.fontSize * scale, fontWeight: row.kind === 'header' ? 700 : 400,
+                      color: compare ? 'rgba(20,40,120,.55)' : (row.kind === 'header' ? (b.headingColor || b.color) : b.color),
+                      borderBottom: `${Math.max(0.4, 0.4 * scale)}px solid ${b.gridColor || '#d7dade'}`,
+                      borderInlineStart: c < b.columns - 1 ? `${Math.max(0.4, 0.4 * scale)}px solid ${b.gridColor || '#d7dade'}` : undefined,
+                      overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                    {editingThis ? (
+                      <input autoFocus dir="rtl" defaultValue={row.cells[c] ?? ''}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onChange={(e) => onChangeCell?.({ tableId: b.id, r, c }, e.target.value)}
+                        onBlur={() => onCommitCell?.()} onKeyDown={(e) => { if (e.key === 'Enter') onCommitCell?.(); }}
+                        style={{ width: '100%', font: 'inherit', color: 'inherit', textAlign: isLabel ? 'right' : 'center', border: '1px solid var(--accent)', background: '#fff', padding: 0 }} />
+                    ) : (row.cells[c] ?? '')}
+                  </div>
+                );
+              });
+            })}
+          </div>
         );
       })}
 

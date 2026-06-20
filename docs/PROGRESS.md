@@ -213,10 +213,14 @@ scale that won't text-extract — explicitly deferred). Grounded in the 8 real b
   `marketing/legal/price`). `cellsToSheet` parses + collects `SheetIssue[]` (unrecognised rows surfaced,
   never silently dropped); `sheetToCells`/`blankTemplateCells` write a self-documenting template. A dealer
   fills it in Excel and "Save As CSV".
-- **`src/data/specToBlocks.ts`** — layout engine: `SpecSheet → BlockIR[]`. The spec table FLATTENS to
-  existing block types (text cells + thin shape gridlines) so the hard-won RTL vector export/editor need
-  ZERO new code. **Multi-column RTL flow** (column 0 = rightmost) fills the spread width and fits ~42 rows;
-  trim header repeats per column. `layoutFeatures` (✓ per trim) and `layoutColors` (swatch+name+type, wheels).
+- **`src/data/specToBlocks.ts`** — `buildSpecTable` emits a **first-class editable `TableBlockIR`** (new IR
+  type, `src/types/catalog.ts`): logical columns (0 = label, RTL-rendered on the right), header/section/data
+  rows, fitted `rowHeight`. `layoutFeatures` (✓ per trim) and `layoutColors` (swatch+name+type, wheels) still
+  flatten to text/shape lists. (`layoutSpecTable` multi-column flow is kept as an alt but unused.)
+- **`TableBlockIR` end-to-end**: rendered in `PageView` (cells + gridlines, **double-click a cell = inline
+  edit**), drawn glyph-by-glyph RTL in `exportPdf` (`drawTableBlock`, shared `columnLeftFraction`), and edited
+  in `App`'s props panel (font/row-height, **add data-row / add category / delete row, add/remove trim column**;
+  resize recomputes `rowHeight`). Serialises as plain JSON → persists in IndexedDB unchanged.
 - **`src/data/mapSheetToCatalog.ts`** — orchestrator: auto-binds simple text slots (model-name←brand+model,
   marketing/legal/price), rebuilds `spec`/`colors`/`safety` pages from the sheet (keeping only the learned
   **panels**, dropping the OLD table's gridlines), and returns a **mapping report** (`mapped` vs `manual`)
@@ -235,10 +239,13 @@ scale that won't text-extract — explicitly deferred). Grounded in the 8 real b
   colours page shows swatches + names + wheels.
 - **Citroën** uses the SAME Stellantis schema (confirmed on C5 Aircross) → the same canonical format covers
   it; only a Citroën-named sample would differ. **MG deferred** (different importer schema + graphical scale).
-- NOTE: spec table is FLATTENED to cells (not a first-class `TableBlockIR`) — add/remove rows by editing the
-  sheet + regenerating (the sheet is the source of truth). A first-class interactive `TableBlockIR` is a
-  possible future refinement. Headless learn still has no photos, so the gate injects a hero-image slot to
-  exercise the manual path.
+- The spec table is a first-class **`TableBlockIR`** (user-requested): edit a single cell in the editor
+  (double-click) or add/remove rows + trim columns from the props panel — no need to re-upload a whole sheet.
+  Headless learn still has no photos, so the gate injects a hero-image slot to exercise the manual path.
+- NOTE: the spec table is a single rectangular grid right-aligned in the page (label + trim columns), so on a
+  wide print-spread the left half is whitespace; the user can widen/move it. A 2-column auto-flow is a possible
+  future refinement. `base` font for a dense page = the SMALLEST styled slot font (the spec small-print),
+  clamped — never a big heading (which would inflate row height).
 
 ## Open follow-ups (not blockers; some folded into the phase)
 - Text colour refinement (op-list) → real `tokens.accent` per model (text colour still placeholder `#111418`;
