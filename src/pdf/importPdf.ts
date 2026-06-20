@@ -3,7 +3,7 @@
 import type { DocumentIR, PageIR, ImageBlockIR, ShapeBlockIR } from '../types/catalog';
 import { extractTextBlocks } from './extractLayout';
 import { renderPageCanvas, cropCanvasErasingText } from './renderPage';
-import { walkPage, resolveImage, type ShapeOp } from './extractImages';
+import { walkPage, resolveImage, type ShapeOp, type MakeCanvas } from './extractImages';
 
 let workerConfigured = false;
 
@@ -23,6 +23,9 @@ async function loadPdfjs() {
 export interface ImportOptions {
   renderPreviews?: boolean; // browser only
   previewScale?: number;
+  /** Canvas factory for Node/headless image extraction (e.g. @napi-rs/canvas). When set,
+   *  image objects are decoded without a DOM; the raster preview stays browser-only. */
+  makeCanvas?: MakeCanvas;
 }
 
 export async function importPdf(
@@ -57,29 +60,35 @@ export async function importPdf(
 
     let previewImage: string | undefined;
     const imageBlocks: ImageBlockIR[] = [];
-    if (opts.renderPreviews && typeof window !== 'undefined') {
-      const makeCanvas = (w: number, h: number) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
-      try {
-        const rendered = await renderPageCanvas(page, opts.previewScale ?? 2);
-        previewImage = rendered.dataUrl;
-        for (let i = 0; i < imageOps.length; i++) {
-          const op = imageOps[i];
-          let src = await resolveImage(page, op, makeCanvas);
-          if (!src) {
-            // last resort: crop preview but ERASE overlapping text so it can't carry text
-            const overlap = textBlocks.filter((t) => !(t.x + t.width < op.bbox.x || t.x > op.bbox.x + op.bbox.width || t.y + t.height < op.bbox.y || t.y > op.bbox.y + op.bbox.height));
-            src = cropCanvasErasingText(rendered.canvas, rendered.scale, op.bbox, overlap);
-            console.warn(`[import] RENDER-CROP FALLBACK fired on ${id} image op#${op.opIndex} (${op.name || 'inline'}) — clean source unresolved; text erased. Resolution has a gap.`);
-          }
-          if (!src) continue;
-          imageBlocks.push({
-            id: `${id}_img${i}`, type: 'image', x: op.bbox.x, y: op.bbox.y, width: op.bbox.width, height: op.bbox.height,
-            rotation: 0, zIndex: op.opIndex, source: 'original',
-            originalBBox: { x: op.bbox.x, y: op.bbox.y, width: op.bbox.width, height: op.bbox.height },
-            src, originalImageRef: src, fit: 'cover',
-          });
+    const browser = typeof window !== 'undefined';
+    if (opts.renderPreviews && (browser || opts.makeCanvas)) {
+      const makeCanvas: MakeCanvas = opts.makeCanvas
+        || ((w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; });
+      // The raster preview (for Compare + render-crop fallback) is browser-only; a Node
+      // text render crashes pdf.js. Image OBJECT decoding works in both via makeCanvas.
+      let rendered: Awaited<ReturnType<typeof renderPageCanvas>> | null = null;
+      if (browser) {
+        try { rendered = await renderPageCanvas(page, opts.previewScale ?? 2); previewImage = rendered.dataUrl; }
+        catch (e) { console.warn('[import] preview render failed', e); }
+      }
+      for (let i = 0; i < imageOps.length; i++) {
+        const op = imageOps[i];
+        let src: string | null = null;
+        try { src = await resolveImage(page, op, makeCanvas); } catch { /* unresolved */ }
+        if (!src && rendered) {
+          // last resort (browser only): crop preview but ERASE overlapping text
+          const overlap = textBlocks.filter((t) => !(t.x + t.width < op.bbox.x || t.x > op.bbox.x + op.bbox.width || t.y + t.height < op.bbox.y || t.y > op.bbox.y + op.bbox.height));
+          src = cropCanvasErasingText(rendered.canvas, rendered.scale, op.bbox, overlap);
+          console.warn(`[import] RENDER-CROP FALLBACK fired on ${id} image op#${op.opIndex} (${op.name || 'inline'}) — clean source unresolved; text erased. Resolution has a gap.`);
         }
-      } catch (e) { console.warn('[import] image pass failed', e); }
+        if (!src) continue;
+        imageBlocks.push({
+          id: `${id}_img${i}`, type: 'image', x: op.bbox.x, y: op.bbox.y, width: op.bbox.width, height: op.bbox.height,
+          rotation: 0, zIndex: op.opIndex, source: 'original',
+          originalBBox: { x: op.bbox.x, y: op.bbox.y, width: op.bbox.width, height: op.bbox.height },
+          src, originalImageRef: src, fit: 'cover',
+        });
+      }
     }
 
     pages.push({
