@@ -52,3 +52,15 @@ export async function loadExportFont(brand: string): Promise<Uint8Array> {
   const res = await fetch(url);
   return new Uint8Array(await res.arrayBuffer());
 }
+
+/** Load BOTH weights to embed on export, so bold text/headings render bold (not faux). */
+export async function loadExportFonts(brand: string): Promise<{ regular: Uint8Array; bold?: Uint8Array }> {
+  const bf = brandFont(brand);
+  const regUrl = bf?.regularUrl || peugeotRegular;
+  const boldUrl = bf?.boldUrl || peugeotBold;
+  const fetchBytes = async (u: string) => new Uint8Array(await (await fetch(u)).arrayBuffer());
+  const regular = await fetchBytes(regUrl);
+  let bold: Uint8Array | undefined;
+  try { bold = await fetchBytes(boldUrl); } catch { bold = undefined; }
+  return { regular, bold };
+}

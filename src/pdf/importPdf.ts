@@ -43,13 +43,21 @@ export async function importPdf(
     const vp = page.getViewport({ scale: 1 });
     const id = `p${n}`;
     const tc = await page.getTextContent();
-    const textBlocks = extractTextBlocks(tc, vp.height, id);
-    // text sits in paint order ABOVE images (captions over photos)
-    textBlocks.forEach((b, i) => { b.zIndex = 1_000_000 + i; });
 
     // SINGLE op-list walk → images + filled shapes in paint order. Shapes need NO canvas,
     // so design panels/strips are captured even in a headless (renderPreviews:false) import.
+    // Running it BEFORE text extraction also populates page.commonObjs with the fonts, so we
+    // can resolve each item's REAL font name (→ correct bold detection).
     const { images: imageOps, shapes: shapeOps } = await walkPage(page, (pdfjs as any).OPS, vp.height);
+
+    const resolveFontName = (loadedName?: string): string | undefined => {
+      if (!loadedName) return undefined;
+      try { return (page.commonObjs.get(loadedName) as { name?: string } | undefined)?.name; }
+      catch { return undefined; }
+    };
+    const textBlocks = extractTextBlocks(tc, vp.height, id, resolveFontName);
+    // text sits in paint order ABOVE images (captions over photos)
+    textBlocks.forEach((b, i) => { b.zIndex = 1_000_000 + i; });
 
     const shapeBlocks: ShapeBlockIR[] = dedupeShapes(shapeOps).map((s, i) => ({
       id: `${id}_sh${i}`, type: 'shape', x: s.bbox.x, y: s.bbox.y, width: s.bbox.width, height: s.bbox.height,

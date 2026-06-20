@@ -66,6 +66,14 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
 
 ## CRITICAL GOTCHAS (hard-won — do not regress)
+-1. **Bold + transparent-image (browser) fixes.** (a) **Bold**: pdf.js text items carry an internal
+    `fontName` (`g_d0_f1`) that never reveals weight; resolve the REAL name via `page.commonObjs.get(name).name`
+    (after the op-list walk populates commonObjs) and test it for bold — that's how `extractLayout` sets
+    `fontWeight`. Export embeds BOTH weights (`loadExportFonts`) and `drawTextBlock`/`drawTableBlock` pick the
+    bold face for `fontWeight>=600`; the editor registers a 700 `@font-face`. (b) **Black swatches**: in the
+    BROWSER pdf.js hands image objects as an `ImageBitmap` (the `bitmap` branch of `objToDataUrl`); we MUST read
+    the pixels back to detect alpha, else an SMasked transparent swatch is saved as opaque JPEG and its
+    transparent areas turn BLACK. Gates: bold checks in `verify:structured`, bitmap-alpha checks in `verify:images`.
 0. **Export must NOT re-wrap single-line imported text** (`exportPdf.planTextLines`). The imported box
    width was measured in the ORIGINAL font; the embedded Peugeot font is slightly wider, so wrapping a
    one-line box spilled a 2nd line DOWN onto the next block → text appeared doubled/overlapping in the PDF

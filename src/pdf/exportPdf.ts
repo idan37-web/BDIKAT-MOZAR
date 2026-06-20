@@ -175,19 +175,19 @@ function drawVisualLine(page: PDFPage, xStart: number, y: number, visual: string
 }
 
 /** Draw a TableBlockIR as vector cells + gridlines (matches the editor's grid). */
-function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: EmbeddedFont): void {
+function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: EmbeddedFont, fontBold: EmbeddedFont): void {
   const color = hexToRgb(tb.color);
   const heading = hexToRgb(tb.headingColor || tb.color);
   const grid = hexToRgb(tb.gridColor || '#d7dade');
   const pad = 3;
   const cellText = (text: string, cellX: number, cellW: number, rowTop: number, align: 'end' | 'center', size: number, col: RGB, bold?: boolean) => {
     if (!text) return;
+    const f = bold ? fontBold : font;
     const visual = logicalToVisual(text, 'rtl');
-    const tw = font.widthOfTextAtSize(visual, size);
+    const tw = f.widthOfTextAtSize(visual, size);
     const xStart = align === 'center' ? cellX + (cellW - tw) / 2 : cellX + cellW - pad - tw;
     const y = pageH - rowTop - tb.rowHeight / 2 - size * 0.34;
-    drawVisualLine(page, xStart, y, visual, size, font, col);
-    if (bold) drawVisualLine(page, xStart + 0.3, y, visual, size, font, col); // faux-bold
+    drawVisualLine(page, xStart, y, visual, size, f, col);
   };
 
   for (let r = 0; r < tb.rows.length; r++) {
@@ -219,10 +219,12 @@ function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: Em
   }
 }
 
-export async function exportPdf(doc: DocumentIR, fontBytes: Uint8Array): Promise<Uint8Array> {
+export async function exportPdf(doc: DocumentIR, fontBytes: Uint8Array, boldBytes?: Uint8Array): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   const font = await pdf.embedFont(fontBytes, { subset: false }); // full embed (Stage 0 finding)
+  // bold variant for bold text/headings; falls back to regular when no bold font is supplied
+  const fontBold = boldBytes ? await pdf.embedFont(boldBytes, { subset: false }) : font;
   const imgCache = new Map<string, PDFImage | null>();
 
   for (const page of doc.pages) {
@@ -237,9 +239,9 @@ export async function exportPdf(doc: DocumentIR, fontBytes: Uint8Array): Promise
         const img = await embedImage(pdf, b.src, imgCache);
         drawImageBlock(p, page.height, b, img);
       } else if (isTableBlock(b)) {
-        drawTableBlock(p, page.height, b, font);
+        drawTableBlock(p, page.height, b, font, fontBold);
       } else if (isTextBlock(b)) {
-        drawTextBlock(p, page.height, b, font);
+        drawTextBlock(p, page.height, b, (b.fontWeight ?? 400) >= 600 ? fontBold : font);
       }
     }
   }

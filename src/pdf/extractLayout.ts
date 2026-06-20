@@ -23,11 +23,15 @@ function dirOf(item: PdfTextItem): TextBlockIR['direction'] {
 /**
  * @param textContent  result of page.getTextContent()
  * @param pageHeight   page height in PDF points (for origin flip)
+ * @param resolveFontName  maps a pdf.js loadedName (e.g. "g_d0_f3") to the REAL font name
+ *   (e.g. "PeugeotNewHebrew-Bold") via page.commonObjs — needed because the item's own
+ *   `fontName` is an internal key that never reveals weight.
  */
 export function extractTextBlocks(
   textContent: PdfTextContent,
   pageHeight: number,
   pageId: string,
+  resolveFontName?: (loadedName?: string) => string | undefined,
 ): TextBlockIR[] {
   const blocks: TextBlockIR[] = [];
   let z = 1;
@@ -43,6 +47,9 @@ export function extractTextBlocks(
     const ascent = it.height || size;
     const top = pageHeight - t[5] - ascent;
 
+    const realName = resolveFontName?.(it.fontName) || it.fontName;
+    const weight = /bold|black|heavy|semibold|\bbd\b/i.test(realName || '') ? 700 : 400;
+
     blocks.push({
       id: `${pageId}_t${i}`,
       type: 'text',
@@ -56,9 +63,9 @@ export function extractTextBlocks(
       originalBBox: { x: round(left), y: round(top), width: round(it.width), height: round(it.height || size * 1.2) },
       text: str,
       originalText: str,
-      fontFamily: cleanFontName(it.fontName),
+      fontFamily: cleanFontName(realName),
       fontSize: round1(size),
-      fontWeight: /bold|black|heavy|semibold/i.test(it.fontName || '') ? 700 : 400,
+      fontWeight: weight,
       lineHeight: 1.2,
       color: '#111418', // pdf.js text content has no color; refined later via op-list
       direction: dirOf(it),

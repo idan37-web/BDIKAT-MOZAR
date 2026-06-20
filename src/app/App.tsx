@@ -7,7 +7,7 @@ import { ImportScreen } from './ImportScreen';
 import { TemplateScreen } from './TemplateScreen';
 import { GenerateScreen } from './GenerateScreen';
 import { PageView, type ViewMode, type CellRef } from './PageView';
-import { brandFont, ensureFontFace, FALLBACK_HEBREW, loadExportFont } from './brandFont';
+import { brandFont, ensureFontFace, FALLBACK_HEBREW, loadExportFonts } from './brandFont';
 import { exportPdf } from '../pdf/exportPdf';
 import { saveProject } from '../store/library';
 
@@ -49,8 +49,8 @@ export function App() {
     if (!doc || exporting) return;
     setExporting(true); setExportErr(null);
     try {
-      const fontBytes = await loadExportFont(doc.brand || '');
-      const bytes = await exportPdf(doc, fontBytes);
+      const { regular, bold } = await loadExportFonts(doc.brand || '');
+      const bytes = await exportPdf(doc, regular, bold);
       const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

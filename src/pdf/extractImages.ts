@@ -137,15 +137,23 @@ function getObj(page: any, name: string): Promise<any> {
   });
 }
 
-function objToDataUrl(o: any, makeCanvas: MakeCanvas): string | null {
+export function objToDataUrl(o: any, makeCanvas: MakeCanvas): string | null {
   if (!o) return null;
   const bmp = o.bitmap ?? (typeof ImageBitmap !== 'undefined' && o instanceof ImageBitmap ? o : null);
   const W = o.width ?? bmp?.width; const H = o.height ?? bmp?.height;
   if (!W || !H) return null;
   const c = makeCanvas(W, H); const ctx = c.getContext('2d'); if (!ctx) return null;
   let hasAlpha = false;
-  if (bmp) { ctx.drawImage(bmp, 0, 0); }
-  else if (o.data) {
+  if (bmp) {
+    ctx.drawImage(bmp, 0, 0);
+    // CRITICAL: in the browser pdf.js hands us an ImageBitmap (this branch). We MUST detect
+    // transparency here — otherwise an SMasked swatch (transparent background) gets saved as
+    // opaque JPEG and its transparent areas turn BLACK. Read the pixels back to check alpha.
+    try {
+      const data = ctx.getImageData(0, 0, W, H).data;
+      for (let q = 3; q < data.length; q += 4) { if (data[q] < 255) { hasAlpha = true; break; } }
+    } catch { hasAlpha = true; /* if we can't sample, keep PNG (lossless, preserves alpha) */ }
+  } else if (o.data) {
     const d: Uint8ClampedArray = o.data; const rgba = new Uint8ClampedArray(W * H * 4);
     if (d.length === W * H * 4) { rgba.set(d); for (let q = 3; q < rgba.length; q += 4) if (rgba[q] < 255) { hasAlpha = true; break; } }
     else if (d.length === W * H * 3) { for (let p = 0, q = 0; p < d.length; p += 3, q += 4) { rgba[q] = d[p]; rgba[q + 1] = d[p + 1]; rgba[q + 2] = d[p + 2]; rgba[q + 3] = 255; } }

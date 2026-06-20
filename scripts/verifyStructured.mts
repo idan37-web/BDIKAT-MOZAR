@@ -7,7 +7,7 @@ import { deflateRawSync } from 'node:zlib';
 import { importPdf } from '../src/pdf/importPdf';
 import { learnTemplate } from '../src/templates/templateLearning';
 import { exportPdf, planTextLines } from '../src/pdf/exportPdf';
-import { isTableBlock } from '../src/types/catalog';
+import { isTableBlock, isTextBlock } from '../src/types/catalog';
 import type { DocumentIR } from '../src/types/catalog';
 import { peugeot3008Sheet } from '../src/data/samples';
 import { sheetStats } from '../src/data/specModel';
@@ -117,8 +117,17 @@ const dres = cellsToSheet(dirty);
 expect('unrecognised row surfaced as an issue', dres.issues.some((i) => /לא מזוהה/.test(i.message)));
 
 // 5) map onto a REAL learned template
+const doc3008 = await imp('project/uploads/PEUGEOT/PRIVATE/3008.pdf');
+// bold is resolved from the REAL font name (via commonObjs), not the internal loadedName
+{
+  const tb = doc3008.pages.flatMap((p) => p.blocks.filter(isTextBlock));
+  const bold = tb.filter((b) => b.fontWeight >= 700);
+  expect('bold headings detected on import', bold.length > 20);
+  expect('a known bold section header is bold', bold.some((b) => b.text.includes('מנוע בנזין') || b.text.includes('בטיחות')));
+  expect('real font family resolved (not loadedName)', tb.some((b) => /Peugeot/i.test(b.fontFamily)));
+}
 const tpl = learnTemplate([
-  await imp('project/uploads/PEUGEOT/PRIVATE/3008.pdf'),
+  doc3008,
   await imp('project/uploads/PEUGEOT/PRIVATE/5008.pdf'),
 ]);
 // Headless import carries no photos, so the learned template has no image slots. Inject a
