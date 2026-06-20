@@ -66,6 +66,15 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
 
 ## CRITICAL GOTCHAS (hard-won — do not regress)
+0. **Export must NOT re-wrap single-line imported text** (`exportPdf.planTextLines`). The imported box
+   width was measured in the ORIGINAL font; the embedded Peugeot font is slightly wider, so wrapping a
+   one-line box spilled a 2nd line DOWN onto the next block → text appeared doubled/overlapping in the PDF
+   (but looked fine in the editor, which clips via `overflow:hidden`). Fix: a single-line box (height ≈ one
+   line) is never wrapped — keep the whole line and shrink to ≥72% to fit the width; taller boxes wrap and
+   clip extra rows. Every text block is also clipped to its box on export (WYSIWYG safety net). The editor
+   renders one-line boxes with `white-space:nowrap` to match. Gate: the `planTextLines` checks in
+   `verify:structured`. Do NOT "simplify" export back to always `wrapText`.
+
 1. **Hebrew is LOGICAL in the IR.** pdf.js `getTextContent().str` and PyMuPDF both return logical order.
    Do NOT reverse at extraction. The terminal's own bidi makes printed strings *look* logical even when
    reversed — never judge order from a console print.

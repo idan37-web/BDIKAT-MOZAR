@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { deflateRawSync } from 'node:zlib';
 import { importPdf } from '../src/pdf/importPdf';
 import { learnTemplate } from '../src/templates/templateLearning';
-import { exportPdf } from '../src/pdf/exportPdf';
+import { exportPdf, planTextLines } from '../src/pdf/exportPdf';
 import { isTableBlock } from '../src/types/catalog';
 import type { DocumentIR } from '../src/types/catalog';
 import { peugeot3008Sheet } from '../src/data/samples';
@@ -66,6 +66,20 @@ function cellsToXlsx(cells: Cells): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------
+// regression guard for the export doubling/overlap bug: a single-line box must NOT wrap (it
+// shrinks to fit instead); a tall box wraps. (See planTextLines.)
+{
+  const m = (t: string, s: number) => t.length * s * 0.6;
+  const long = 'המושבים הקדמיים ב-3008 החדש מתאפיינים בצורה דינמית ונעימה';
+  const one = planTextLines(long, 200, 12, 11, 1.2, m);
+  expect('single-line box never wraps (no overflow onto neighbour)', one.lines.length === 1);
+  expect('single-line overflowing text shrinks to fit', one.drawSize < 11 && one.drawSize >= 11 * 0.72);
+  const fits = planTextLines('קצר', 200, 12, 11, 1.2, m);
+  expect('single-line that fits keeps its size', fits.lines.length === 1 && fits.drawSize === 11);
+  const tall = planTextLines(long, 200, 60, 11, 1.2, m);
+  expect('tall box wraps to multiple lines', tall.lines.length > 1);
+}
+
 const sheet = peugeot3008Sheet();
 const stats = sheetStats(sheet);
 expect('sample sheet has real data', stats.rows >= 25 && stats.colors === 5 && stats.trims === 2);

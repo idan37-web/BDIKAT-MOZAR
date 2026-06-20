@@ -176,6 +176,8 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, editingId,
             onChange={(t) => onChangeText?.(b.id, t)} onCommit={() => onCommit?.()} />;
         }
         const selected = selectedId === b.id;
+        // a single-line box must not wrap (matches the vector export, which clips to the box)
+        const oneLine = b.height <= b.fontSize * (b.lineHeight || 1.2) * 1.5;
         return (
           <div key={b.id}
             dir={b.direction === 'ltr' ? 'ltr' : 'rtl'}
@@ -187,7 +189,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, editingId,
               fontSize: b.fontSize * scale, lineHeight: b.lineHeight,
               fontFamily: fontFamily || b.fontFamily, fontWeight: b.fontWeight,
               color: compare ? 'rgba(20,40,120,.55)' : b.color,
-              whiteSpace: 'pre-wrap', overflow: 'hidden',
+              whiteSpace: oneLine ? 'nowrap' : 'pre-wrap', overflow: 'hidden',
               unicodeBidi: 'plaintext',
               textAlign: b.align === 'end' ? 'right' : b.align === 'center' ? 'center' : 'left',
               cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',

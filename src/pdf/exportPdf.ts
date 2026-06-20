@@ -103,35 +103,62 @@ function drawImageBlock(page: PDFPage, pageH: number, b: ImageBlockIR, img: PDFI
   if (needsClip) page.pushOperators(popGraphicsState());
 }
 
+/**
+ * Decide how a text block is drawn. A SINGLE-LINE box must NOT wrap: the imported box width was
+ * measured in the ORIGINAL font, and our embedded font is slightly wider, so wrapping would push a
+ * 2nd line down onto the next block (the doubling/overlap bug). For a single-line box we keep the
+ * whole line and shrink slightly to fit the width; taller boxes wrap and clip extra rows (the editor
+ * clips too via overflow:hidden). Pure + exported so a gate can lock the behaviour.
+ */
+export function planTextLines(
+  text: string, width: number, height: number, fontSize: number, lineHeight: number, measure: (t: string, s: number) => number,
+): { lines: string[]; drawSize: number } {
+  const lineGap = fontSize * (lineHeight || 1.2);
+  const maxLines = Math.max(1, Math.floor((height + fontSize * 0.35) / lineGap));
+  if (maxLines <= 1) {
+    const one = text.replace(/\s*\n\s*/g, ' ');
+    const floor = fontSize * 0.72;
+    let drawSize = fontSize;
+    while (drawSize > floor && measure(one, drawSize) > width) drawSize = Math.max(floor, drawSize - 0.25);
+    return { lines: [one], drawSize };
+  }
+  let lines = wrapText(text, width, fontSize, measure);
+  if (lines.length > maxLines) lines = lines.slice(0, maxLines);
+  return { lines, drawSize: fontSize };
+}
+
 function drawTextBlock(page: PDFPage, pageH: number, tb: TextBlockIR, font: Awaited<ReturnType<PDFDocument['embedFont']>>): void {
   const size = tb.fontSize;
   const color = hexToRgb(tb.color);
-  const lineGap = size * (tb.lineHeight || 1.2);
-  // wrap to the box width (matches the DOM editor) so long lines never overflow horizontally
   const measure = (t: string, s: number) => font.widthOfTextAtSize(t, s);
-  const lines = wrapText(tb.text, tb.width, size, measure);
+  const { lines, drawSize } = planTextLines(tb.text, tb.width, tb.height, size, tb.lineHeight || 1.2, measure);
+  const drawGap = drawSize * (tb.lineHeight || 1.2);
+  // clip every text block to its box so nothing ever bleeds onto a neighbour (WYSIWYG safety net)
+  const clipBottom = pageH - tb.y - tb.height;
+  page.pushOperators(pushGraphicsState(), rectangle(tb.x - 0.5, clipBottom - 0.5, tb.width + 1, tb.height + 1), clip(), endPath());
   for (let li = 0; li < lines.length; li++) {
     const raw = lines[li];
     if (!raw) continue;
     const visual = logicalToVisual(raw, tb.direction === 'ltr' ? 'ltr' : 'rtl');
-    const tw = font.widthOfTextAtSize(visual, size);
+    const tw = font.widthOfTextAtSize(visual, drawSize);
     let x = tb.x;
     if (tb.direction === 'rtl' || tb.align === 'end') x = tb.x + tb.width - tw;
     else if (tb.align === 'center') x = tb.x + (tb.width - tw) / 2;
-    const y = pageH - tb.y - size * 0.85 - li * lineGap;
+    const y = pageH - tb.y - drawSize * 0.85 - li * drawGap;
     // Draw glyph-by-glyph at explicit x: we already reordered to VISUAL order, and
     // positioning each glyph absolutely prevents the PDF VIEWER from re-applying bidi
     // (which would otherwise reverse numbers / flip a line that starts with Hebrew).
     let cx = x;
     for (const ch0 of visual) {
       const ch = ch0 === '׳' ? "'" : ch0 === '״' ? '"' : ch0;
-      const w = font.widthOfTextAtSize(ch, size);
+      const w = font.widthOfTextAtSize(ch, drawSize);
       if (ch !== ' ') {
-        try { page.drawText(ch, { x: cx, y, size, font, color }); } catch { /* skip unencodable */ }
+        try { page.drawText(ch, { x: cx, y, size: drawSize, font, color }); } catch { /* skip unencodable */ }
       }
       cx += w;
     }
   }
+  page.pushOperators(popGraphicsState());
 }
 
 type EmbeddedFont = Awaited<ReturnType<PDFDocument['embedFont']>>;
