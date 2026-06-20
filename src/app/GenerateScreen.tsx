@@ -6,13 +6,36 @@ import type { DocumentIR } from '../types/catalog';
 import type { SlotSpec, TemplateSpec } from '../templates/templateSpec';
 import { listTemplates } from '../store/library';
 import { generateCatalog, validateCatalog, dynamicSlots, REQUIRED_KINDS, type BindingMap } from '../catalog/generateCatalog';
-import { autofitDocument, canvasMeasureFor } from '../catalog/autofit';
+import { autofitDocument, canvasMeasureFor, type Measure } from '../catalog/autofit';
 import { brandFont, ensureFontFace, FALLBACK_HEBREW } from './brandFont';
+import { parseSpreadsheet, toCSV } from '../data/parseSheet';
+import { cellsToSheet, sheetToCells, blankTemplateCells, type SheetIssue } from '../data/specSheetFormat';
+import { sheetStats, type SpecSheet } from '../data/specModel';
+import { mapSheetToCatalog, type FieldMapping } from '../data/mapSheetToCatalog';
+import { peugeot3008Sheet } from '../data/samples';
 
 const ROLE_HE: Record<string, string> = {
   cover: 'שער', feature: 'עמוד שיווקי', interior: 'עיצוב פנים', colors: 'צבעים',
   wheels: 'חישוקים', safety: 'בטיחות', spec: 'מפרט טכני', price: 'מחיר', back: 'גב/משפטי', content: 'תוכן',
 };
+
+/** A plain text measurer bound to one font family (PDF points == CSS px at scale 1). */
+function plainMeasure(family: string): Measure {
+  const cv = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+  const ctx = cv?.getContext('2d') || null;
+  return (text: string, size: number) => {
+    if (!ctx) return text.length * size * 0.5;
+    ctx.font = `${size}px ${family}`;
+    return ctx.measureText(text).width;
+  };
+}
+
+function downloadCsv(name: string, cells: string[][]) {
+  const blob = new Blob([toCSV(cells)], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 
 export function GenerateScreen({ initialSpec, onCreate, onBack }: {
   initialSpec?: TemplateSpec | null;
@@ -30,9 +53,38 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [bindings, setBindings] = React.useState<BindingMap>({});
   const [showMissing, setShowMissing] = React.useState(false);
+  // Milestone D — structured data ingestion
+  const [sheet, setSheet] = React.useState<SpecSheet | null>(null);
+  const [issues, setIssues] = React.useState<SheetIssue[]>([]);
+  const [dataErr, setDataErr] = React.useState<string | null>(null);
+  const [dataName, setDataName] = React.useState<string>('');
 
-  // reset bindings when the template changes
-  React.useEffect(() => { setBindings({}); setShowMissing(false); }, [spec?.id]);
+  // reset bindings + data when the template changes
+  React.useEffect(() => { setBindings({}); setShowMissing(false); setSheet(null); setIssues([]); setDataErr(null); setDataName(''); }, [spec?.id]);
+
+  // mapping report (which fields the sheet populates vs. what stays manual)
+  const report = React.useMemo<{ mappings: FieldMapping[]; manual: FieldMapping[]; warnings: string[] } | null>(() => {
+    if (!spec || !sheet) return null;
+    const { mappings, manual, warnings } = mapSheetToCatalog(spec, sheet, {});
+    return { mappings, manual, warnings };
+  }, [spec?.id, sheet]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadDataFile(file: File) {
+    setDataErr(null); setDataName(file.name);
+    try {
+      const isText = /\.(csv|tsv|txt)$/i.test(file.name);
+      const cells = await parseSpreadsheet(file.name, isText ? await file.text() : await file.arrayBuffer());
+      const { sheet: s, issues: iss } = cellsToSheet(cells);
+      if (!s.sections.length && !s.features.length && !s.colors.length) {
+        setDataErr('לא זוהו נתונים מובנים בקובץ. ודא שהשורות מתויגות (spec/feature/color…) או הורד תבנית.');
+        setSheet(null); setIssues(iss); return;
+      }
+      setSheet(s); setIssues(iss);
+    } catch (e) {
+      setDataErr(`קריאת הקובץ נכשלה: ${(e as Error).message}. נסה לשמור כ-CSV (UTF-8).`);
+      setSheet(null);
+    }
+  }
 
   if (!spec) {
     return (
@@ -49,7 +101,8 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
 
   // shape (background/accent) slots auto-fill from the learned design → not in the manual form
   const slots = dynamicSlots(spec).filter((s) => s.slot.blockType !== 'shape');
-  const missing = validateCatalog(spec, bindings);
+  // when a structured sheet supplies the model name, it no longer needs manual entry
+  const missing = validateCatalog(spec, bindings).filter((m) => !(sheet?.model && m.kind === 'model-name'));
   const setText = (key: string, text: string) => setBindings((b) => ({ ...b, [key]: { ...b[key], key, text } }));
   const setImage = (key: string, file: File) => {
     const rd = new FileReader();
@@ -59,11 +112,15 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
 
   function create() {
     if (missing.length) { setShowMissing(true); return; }
-    const doc = generateCatalog(spec!, bindings);
-    // Milestone B: auto-fit text to its box before opening (shrink→wrap→grow→flag)
     const bf = brandFont(spec!.brand || '');
     if (bf) ensureFontFace(bf);
     const family = bf ? `'${bf.family}', ${FALLBACK_HEBREW}` : FALLBACK_HEBREW;
+    // Milestone D: when a structured sheet is loaded, populate spec/feature/colour pages from
+    // it (with the manual form supplying images/overrides); otherwise the Stage-7 slot path.
+    const doc = sheet
+      ? mapSheetToCatalog(spec!, sheet, { bindings, measure: plainMeasure(family), title: 'מפרט טכני' }).doc
+      : generateCatalog(spec!, bindings);
+    // Milestone B: auto-fit text to its box before opening (shrink→wrap→grow→flag)
     autofitDocument(doc, canvasMeasureFor(family));
     onCreate(doc);
   }
@@ -101,6 +158,76 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
             מלא את הסלוטים הדינמיים (כתום) שזוהו בתבנית. שדות חובה מסומנים ב-<b style={{ color: 'var(--danger)' }}>*</b>.
             סלוטים קבועים (טקסט מותג/משפטי) מגיעים מהתבנית אוטומטית. מה שתשאיר ריק יקבל את ערך-הדוגמה שנלמד, וניתן יהיה לערוך הכל בעורך.
           </p>
+
+          {/* Milestone D — structured data ingestion (Excel/CSV → slots) */}
+          <div style={{ border: '1px solid var(--line)', borderRadius: 12, background: 'var(--surface)', overflow: 'hidden' }}>
+            <div style={{ padding: '10px 14px', background: 'var(--surface-2)', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <strong style={{ fontSize: 14 }}>נתונים מובנים (Excel / CSV)</strong>
+              <span style={{ color: 'var(--ink-3)', fontSize: 12.5 }}>טען מפרט מובנה → מפרט/אבזור/צבעים ימולאו אוטומטית</span>
+              <div style={{ flex: 1 }} />
+              <label className="btn btn-sm" style={{ cursor: 'pointer', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>
+                העלה קובץ
+                <input type="file" accept=".csv,.tsv,.txt,.xlsx" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) loadDataFile(f); e.currentTarget.value = ''; }} />
+              </label>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setSheet(peugeot3008Sheet()); setIssues([]); setDataErr(null); setDataName('פיג׳ו 3008 (דוגמה)'); }}>טען דוגמה אמיתית</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => downloadCsv('autospec-template.csv', blankTemplateCells(spec!.pages.some((p) => p.role === 'spec') ? ['GT', 'ALLURE'] : ['בסיסי']))}>הורד תבנית</button>
+              {sheet && <button className="btn btn-ghost btn-sm" onClick={() => downloadCsv(`${sheet.model || 'spec'}.csv`, sheetToCells(sheet))}>הורד כ-CSV</button>}
+            </div>
+            <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {dataErr && <div style={{ color: 'var(--danger)', fontSize: 13 }}>{dataErr}</div>}
+              {!sheet && !dataErr && (
+                <div style={{ color: 'var(--ink-3)', fontSize: 13 }}>
+                  אין נתונים טעונים. העלה קובץ Excel/CSV מובנה, או הורד תבנית למילוי. אפשר גם להמשיך במילוי ידני בלבד (למטה).
+                </div>
+              )}
+              {sheet && (() => {
+                const st = sheetStats(sheet);
+                return (
+                  <>
+                    <div style={{ fontSize: 13.5, display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+                      <span><b>{dataName}</b></span>
+                      <span>גרסאות: <b>{st.trims}</b></span>
+                      <span>שורות מפרט: <b>{st.rows}</b></span>
+                      <span>ערכים: <b>{st.values}</b></span>
+                      <span>אבזור: <b>{st.features}</b></span>
+                      <span>צבעים: <b>{st.colors}</b></span>
+                      <span>חישוקים: <b>{st.wheels}</b></span>
+                    </div>
+                    {report && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {report.mappings.map((m, i) => (
+                          <span key={i} title={m.detail} style={{
+                            fontSize: 12, padding: '3px 9px', borderRadius: 999,
+                            background: m.status === 'mapped' ? 'rgba(34,160,90,.12)' : 'rgba(220,150,20,.14)',
+                            color: m.status === 'mapped' ? '#1d7a44' : '#a4690a',
+                            border: `1px solid ${m.status === 'mapped' ? 'rgba(34,160,90,.3)' : 'rgba(220,150,20,.35)'}`,
+                          }}>
+                            {m.status === 'mapped' ? '✓' : '✎'} {m.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {report && report.manual.length > 0 && (
+                      <div style={{ fontSize: 12.5, color: '#a4690a' }}>
+                        להשלמה ידנית: {report.manual.map((m) => m.label).join(' · ')} (מלא בטופס למטה)
+                      </div>
+                    )}
+                    {report && report.warnings.length > 0 && (
+                      <div style={{ fontSize: 12.5, color: 'var(--danger)' }}>{report.warnings.join(' · ')}</div>
+                    )}
+                    {issues.length > 0 && (
+                      <details style={{ fontSize: 12.5 }}>
+                        <summary style={{ cursor: 'pointer', color: '#a4690a' }}>{issues.length} שורות לתשומת לב</summary>
+                        <ul style={{ margin: '6px 0 0', paddingInlineStart: 18 }}>
+                          {issues.slice(0, 20).map((it, i) => <li key={i}>{it.row ? `שורה ${it.row}: ` : ''}{it.message}</li>)}
+                        </ul>
+                      </details>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
           {[...byPage.entries()].map(([pageIndex, items]) => {
             const role = items[0]?.role;
             return (

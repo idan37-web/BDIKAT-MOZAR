@@ -153,7 +153,7 @@ add it in `src/app/brandFont.ts` (and embed in export).
 
 ## Phase "usable on a real catalog" — milestones
 Spec: `docs/PHASE-usable-on-real-catalog.md`. Hardening only — NO new slot types/templates/effects/print.
-Verification gates (all headless, real PDFs): `npm run verify:learn|gen|milestone-a|shapes|images|autofit`.
+Verification gates (all headless, real PDFs): `npm run verify:learn|gen|milestone-a|shapes|images|autofit|persistence|structured`.
 
 - ✅ **Design fidelity (user-requested)** — vector panels/strips/swatches extracted into the IR; tables reproduced
   cell-by-cell with gridlines (`design[]` layer); photos extractable headlessly. See "Design-fidelity pass" below.
@@ -180,8 +180,9 @@ Verification gates (all headless, real PDFs): `npm run verify:learn|gen|mileston
   `npm run verify:milestone-a` (learn 3008+5008 → generate "פיג׳ו 408" → stream a real image asset → edit a
   heading → export). Pixel-confirmed with PyMuPDF: cover shows the hero photo + logo + "פיג׳ו 408 — חוויה חדשה"
   in correct RTL order, 2 images embedded, text selectable/vector.
-- 🔜 **B — generation-time auto-fit** (text shrink→wrap→grow→flag; tables shrink→continue→flag). 🔜 **C — IndexedDB
-  persistence** (templates + projects, autosave). 🔜 **D — structured-data ingestion** (md spec / Excel → slots, manual fallback).
+- ✅ **D — structured-data ingestion** (`src/data/`). Excel/CSV/XLSX → a brand-neutral `SpecSheet`
+  (spec table + equipment features + colours + wheels + marketing/legal/price) → mapped onto a learned
+  template → catalog. See "Milestone D — AS BUILT" below. Gate `npm run verify:structured`.
 
 ## Design-fidelity pass (user-requested; "make it look like a catalog")
 After Milestone A the user judged generated pages too plain (missing panels, broken tables). Fixed:
@@ -194,6 +195,50 @@ After Milestone A the user judged generated pages too plain (missing panels, bro
 - **Tables no longer collapse.** Reverted the Stage-6 dense-page consolidation: every positioned text run stays its
   own slot, so generation reproduces the spec/safety grid (cross-doc → fixed column labels + dynamic values) instead
   of one blob. Pixel-confirmed: generated 3008→408 spec page renders the full two-column table over the gray panels.
+
+## Milestone D (structured-data ingestion) — AS BUILT
+Chosen with the user: **data source = Excel/CSV upload** (not PDF re-extract), **scope = spec + features +
+colours**, **Peugeot/Citroën first** (MG is a different importer — different schema + a GRAPHICAL pollution
+scale that won't text-extract — explicitly deferred). Grounded in the 8 real brochures the user uploaded
+(Peugeot 3008/408/Rifter, Citroën C3/C5 Aircross/Berlingo, MG HS PHEV / S9).
+- **`src/data/specModel.ts`** — the brand-neutral `SpecSheet` (the "car-comparison schema"): `trims[]`,
+  `sections[{title, rows[{label,unit,values[]}]}]`, `features[{title, items[{label, perTrim[]}]}]`,
+  `colors[]`, `wheels[]`, `marketingText/legalText/price`. `normalizeSheet` enforces the invariant
+  *values align to trims* (a single value broadcasts across finishes).
+- **`src/data/parseSheet.ts`** — zero-dependency spreadsheet reader (single-file-build safe). CSV/TSV with
+  delimiter auto-detect + BOM + quotes; **real .xlsx** via a minimal ZIP reader + `DecompressionStream`
+  ('deflate-raw', present in the browser AND node 22) + sharedStrings/sheet XML. `toCSV` writes UTF-8+BOM.
+- **`src/data/specSheetFormat.ts`** — the canonical **tagged** sheet (col-A record tag, Hebrew/English
+  aliases: `spec|מפרט`, `feature|אבזור`, `color|צבע`, `wheel|חישוק`, `meta|מטא`, `trims|גרסאות`,
+  `marketing/legal/price`). `cellsToSheet` parses + collects `SheetIssue[]` (unrecognised rows surfaced,
+  never silently dropped); `sheetToCells`/`blankTemplateCells` write a self-documenting template. A dealer
+  fills it in Excel and "Save As CSV".
+- **`src/data/specToBlocks.ts`** — layout engine: `SpecSheet → BlockIR[]`. The spec table FLATTENS to
+  existing block types (text cells + thin shape gridlines) so the hard-won RTL vector export/editor need
+  ZERO new code. **Multi-column RTL flow** (column 0 = rightmost) fills the spread width and fits ~42 rows;
+  trim header repeats per column. `layoutFeatures` (✓ per trim) and `layoutColors` (swatch+name+type, wheels).
+- **`src/data/mapSheetToCatalog.ts`** — orchestrator: auto-binds simple text slots (model-name←brand+model,
+  marketing/legal/price), rebuilds `spec`/`colors`/`safety` pages from the sheet (keeping only the learned
+  **panels**, dropping the OLD table's gridlines), and returns a **mapping report** (`mapped` vs `manual`)
+  so unmapped fields (hero/interior images, anything not in the sheet) are clearly surfaced for manual fill.
+- **`src/data/samples.ts`** — `peugeot3008Sheet()`: a REAL SpecSheet transcribed from the 3008 MHEV brochure
+  (p13 spec + p15 equipment). Drives the "טען דוגמה אמיתית" button, the real-data template, and the gate.
+- **UI** (`src/app/GenerateScreen.tsx`): a "נתונים מובנים (Excel/CSV)" panel — upload / load-real-example /
+  download-template / download-as-CSV, a parse summary, the mapping report (green ✓ mapped, amber ✎ manual),
+  warnings, and an issues `<details>`. When a sheet is loaded, "צור קטלוג" runs `mapSheetToCatalog` (manual
+  form still supplies images/overrides as the fallback), else the Stage-7 slot path. Auto-fit + same export.
+- **Verify**: `npm run verify:structured` — round-trips the real sheet through CSV **and TSV and a real
+  .xlsx** (deflate + shared strings, byte-identical stats), surfaces a malformed row as an issue, maps onto
+  the learned 3008+5008 template (asserts real values `453.5`/`1,199`, trim header `GT`, section `מידות`,
+  model-name + marketing mapped, hero image surfaced as manual), and exports a **real vector PDF**.
+  Pixel-confirmed with PyMuPDF: the spec page renders as a 2-column RTL table (numbers un-reversed) and the
+  colours page shows swatches + names + wheels.
+- **Citroën** uses the SAME Stellantis schema (confirmed on C5 Aircross) → the same canonical format covers
+  it; only a Citroën-named sample would differ. **MG deferred** (different importer schema + graphical scale).
+- NOTE: spec table is FLATTENED to cells (not a first-class `TableBlockIR`) — add/remove rows by editing the
+  sheet + regenerating (the sheet is the source of truth). A first-class interactive `TableBlockIR` is a
+  possible future refinement. Headless learn still has no photos, so the gate injects a hero-image slot to
+  exercise the manual path.
 
 ## Open follow-ups (not blockers; some folded into the phase)
 - Text colour refinement (op-list) → real `tokens.accent` per model (text colour still placeholder `#111418`;
