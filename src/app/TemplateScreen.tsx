@@ -31,6 +31,7 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
   const [tpl, setTpl] = React.useState<TemplateSpec | null>(null);
   const [curPage, setCurPage] = React.useState(0);
   const [selSlot, setSelSlot] = React.useState<string | null>(null);
+  const [selSlots, setSelSlots] = React.useState<Set<string>>(() => new Set());
   const [saved, setSaved] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -70,16 +71,32 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
     }
   }
 
-  function patchSlot(slotId: string, patch: Partial<SlotSpec>) {
+  function patchSlots(ids: Set<string>, patch: Partial<SlotSpec>) {
     setSaved(false);
     setTpl((t) => !t ? t : {
       ...t,
       pages: t.pages.map((p, i) => i !== curPage ? p : {
         ...p,
-        slots: p.slots.map((s) => s.id === slotId ? { ...s, ...patch } : s),
+        slots: p.slots.map((s) => ids.has(s.id) ? { ...s, ...patch } : s),
       }),
     });
   }
+  const patchSlot = (slotId: string, patch: Partial<SlotSpec>) => patchSlots(new Set([slotId]), patch);
+  function removeSlots(ids: Set<string>) {
+    setSaved(false);
+    setTpl((t) => !t ? t : {
+      ...t,
+      pages: t.pages.map((p, i) => i !== curPage ? p : { ...p, slots: p.slots.filter((s) => !ids.has(s.id)) }),
+    });
+    setSelSlot(null); setSelSlots(new Set());
+  }
+  const pickSlot = (id: string, additive: boolean) => {
+    setSelSlot(id);
+    setSelSlots((prev) => {
+      if (additive) { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; }
+      return new Set([id]);
+    });
+  };
 
   async function doSave() {
     if (!tpl) return;
@@ -156,7 +173,7 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
         {/* page rail */}
         <div style={{ width: 132, flexShrink: 0, overflowY: 'auto', padding: 10, borderInlineEnd: '1px solid var(--line)', background: 'var(--surface-2)' }}>
           {tpl.pages.map((p, i) => (
-            <button key={i} onClick={() => { setCurPage(i); setSelSlot(null); }}
+            <button key={i} onClick={() => { setCurPage(i); setSelSlot(null); setSelSlots(new Set()); }}
               style={{ display: 'block', width: '100%', marginBottom: 8, cursor: 'pointer', textAlign: 'start', border: i === curPage ? '2px solid var(--accent)' : '1px solid var(--line)', borderRadius: 6, overflow: 'hidden', background: '#fff' }}>
               {docs[0]?.pages[p.index]?.previewImage && <img src={docs[0].pages[p.index].previewImage} alt="" style={{ width: '100%', display: 'block' }} />}
               <div style={{ fontSize: 10, padding: '3px 5px', color: 'var(--ink-2)', display: 'flex', justifyContent: 'space-between' }}>
@@ -172,16 +189,20 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
             {preview && <img src={preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.5 }} />}
             {page.slots.map((s) => {
               const r = blockScreenRect(s.bbox, scale);
-              const on = s.id === selSlot;
-              const c = s.dynamic ? 'var(--accent)' : '#7b8088';
+              const inMulti = selSlots.has(s.id);
+              const on = s.id === selSlot || inMulti;
+              const c = s.ignored ? '#b00' : s.dynamic ? 'var(--accent)' : '#7b8088';
               return (
-                <button key={s.id} onClick={() => setSelSlot(s.id)} title={`${s.label} · ${s.dynamic ? 'דינמי' : 'קבוע'}`}
+                <button key={s.id} onClick={(e) => pickSlot(s.id, e.shiftKey || e.metaKey || e.ctrlKey)}
+                  title={`${s.label} · ${s.ignored ? 'מוסתר' : s.dynamic ? 'דינמי' : 'קבוע'}`}
                   style={{
                     position: 'absolute', left: r.left, top: r.top, width: Math.max(6, r.width), height: Math.max(6, r.height),
-                    border: `${on ? 2 : 1.5}px solid ${c}`, background: s.dynamic ? 'rgba(232,120,30,.14)' : 'rgba(123,128,136,.12)',
+                    border: `${on ? 2 : 1.5}px ${s.ignored ? 'dashed' : 'solid'} ${c}`,
+                    background: s.ignored ? 'rgba(160,0,0,.06)' : s.dynamic ? 'rgba(232,120,30,.14)' : 'rgba(123,128,136,.12)',
                     borderRadius: 3, cursor: 'pointer', padding: 0, boxShadow: on ? `0 0 0 2px ${c}55` : 'none',
+                    opacity: s.ignored ? 0.5 : 1,
                   }}>
-                  <span style={{ position: 'absolute', top: -1, insetInlineEnd: 1, fontSize: 9, lineHeight: '11px', padding: '0 2px', background: c, color: '#fff', borderRadius: 2, whiteSpace: 'nowrap' }}>
+                  <span style={{ position: 'absolute', top: -1, insetInlineEnd: 1, fontSize: 9, lineHeight: '11px', padding: '0 2px', background: c, color: '#fff', borderRadius: 2, whiteSpace: 'nowrap', textDecoration: s.ignored ? 'line-through' : 'none' }}>
                     {s.label}
                   </span>
                 </button>
@@ -196,8 +217,27 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
             עמוד {curPage + 1} · <b>{ROLE_HE[page.role] || page.role}</b>
             <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>{page.roleEvidence.join(' · ')}</div>
           </div>
-          {!sel ? (
-            <p style={{ color: 'var(--ink-3)', fontSize: 13 }}>בחר סלוט (מלבן) כדי לתקן את הסיווג. כתום=דינמי (מתמלא לכל דגם) · אפור=קבוע (אלמנט מותג).</p>
+          {selSlots.size > 1 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ fontWeight: 800 }}>{selSlots.size} סלוטים נבחרו</div>
+              <p style={{ fontSize: 12, color: 'var(--ink-2)', margin: 0 }}>Shift/⌘-קליק מוסיף/מסיר. פעולה תחול על כולם.</p>
+              <label style={{ fontSize: 12, fontWeight: 700 }}>שנה סוג לכולם
+                <select defaultValue="" onChange={(e) => { if (e.target.value) patchSlots(selSlots, { kind: e.target.value as SlotKind }); }}
+                  style={{ width: '100%', marginTop: 4, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)' }}>
+                  <option value="">— בחר סוג —</option>
+                  {SLOT_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+                </select>
+              </label>
+              <div className="seg">
+                <button onClick={() => patchSlots(selSlots, { dynamic: true, fixedContent: undefined })} style={{ flex: 1, fontSize: 12 }}>דינמי</button>
+                <button onClick={() => patchSlots(selSlots, { dynamic: false })} style={{ flex: 1, fontSize: 12 }}>קבוע</button>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => patchSlots(selSlots, { ignored: true })}>התעלם מכולם</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => patchSlots(selSlots, { ignored: false })}>בטל התעלמות</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => removeSlots(selSlots)} style={{ color: 'var(--danger)' }}>מחק {selSlots.size} סלוטים</button>
+            </div>
+          ) : !sel ? (
+            <p style={{ color: 'var(--ink-3)', fontSize: 13 }}>בחר סלוט (מלבן) כדי לתקן את הסיווג. Shift/⌘-קליק לבחירה מרובה. כתום=דינמי · אפור=קבוע · אדום מקווקו=מוסתר.</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ fontWeight: 800 }}>סלוט</div>
@@ -218,6 +258,13 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
                 <input value={sel.label} onChange={(e) => patchSlot(sel.id, { label: e.target.value })}
                   style={{ width: '100%', marginTop: 4, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)' }} />
               </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-ghost btn-sm" style={{ flex: 1, color: sel.ignored ? 'var(--accent)' : '#b00' }} onClick={() => patchSlot(sel.id, { ignored: !sel.ignored })}>
+                  {sel.ignored ? '↺ בטל התעלמות' : '⊘ התעלם מסלוט'}
+                </button>
+                <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => removeSlots(new Set([sel.id]))}>מחק</button>
+              </div>
+              {sel.ignored && <div style={{ fontSize: 11.5, color: '#b00' }}>הסלוט מוסתר — לא ייכלל בקטלוג שייווצר.</div>}
               <div style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--mono)' }} dir="ltr">
                 {sel.blockType} · conf {sel.confidence} · {sel.variants} variant(s) · {sel.crossDocEvidence ? 'cross-doc' : 'single-doc'}
               </div>

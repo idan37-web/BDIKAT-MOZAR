@@ -32,7 +32,7 @@ export function validateCatalog(spec: TemplateSpec, bindings: BindingMap): Missi
   const missing: MissingSlot[] = [];
   for (const page of spec.pages) {
     for (const slot of page.slots) {
-      if (!slot.dynamic || !REQUIRED_KINDS.has(slot.kind)) continue;
+      if (slot.ignored || !slot.dynamic || !REQUIRED_KINDS.has(slot.kind)) continue;
       const b = bindings[slot.key];
       const filled = slot.blockType === 'image' ? !!b?.imageSrc : !!(b?.text && b.text.trim());
       if (!filled) missing.push({ pageIndex: page.index, key: slot.key, kind: slot.kind, label: slot.label });
@@ -145,12 +145,15 @@ export function generateCatalog(
       blocks.push(shape);
     });
     tp.slots.forEach((slot, i) => {
+      if (slot.ignored) return; // user excluded this slot from generation
       if (slot.blockType === 'shape') blocks.push(makeShapeBlock(slot, bindings[slot.key], 100 + i));
     });
     tp.slots.forEach((slot, i) => {
+      if (slot.ignored) return;
       if (slot.blockType === 'image') blocks.push(makeImageBlock(slot, bindings[slot.key], 1_000 + i));
     });
     tp.slots.forEach((slot, i) => {
+      if (slot.ignored) return;
       if (slot.blockType === 'text') blocks.push(makeTextBlock(slot, bindings[slot.key], 1_000_000 + i, fallbackColor));
     });
     return {
@@ -174,6 +177,6 @@ export function generateCatalog(
 /** All fillable (dynamic) slots, flattened for a binding form. */
 export function dynamicSlots(spec: TemplateSpec): { pageIndex: number; role: string; slot: SlotSpec }[] {
   const out: { pageIndex: number; role: string; slot: SlotSpec }[] = [];
-  for (const p of spec.pages) for (const s of p.slots) if (s.dynamic) out.push({ pageIndex: p.index, role: p.role, slot: s });
+  for (const p of spec.pages) for (const s of p.slots) if (s.dynamic && !s.ignored) out.push({ pageIndex: p.index, role: p.role, slot: s });
   return out;
 }

@@ -194,14 +194,28 @@ export function groupRegions(page: PageIR, cluster = true): Region[] {
 // Role classification
 // ---------------------------------------------------------------------------
 const KW = {
-  colors: /צבע|בחר את הצבע|ריפוד/,
-  wheels: /חישוק|ג['׳]?נט|גלגל/,
-  safety: /בטיחות|כריות אוויר|מערכת סיוע|בלימה/,
-  pollution: /זיהום|דרגת זיהום|פליטת|CO2/i,
+  colors: /צבע|גוון|בחר את הצבע|ריפוד|מטאל[יי]|פנינה/,
+  wheels: /חישוק|ג['׳]?נט|גלגל|חישוקי סגסוגת/,
+  safety: /בטיחות|כריות אוויר|מערכת סיוע|מערכת בקרת|בלימה|ESP|ABS|EBD|זיהוי תמרורים|בקרת שיוט|התרעה/,
+  equipment: /אבזור|ציוד|מערכת מולטימדיה|מסך|דיבורית|USB|מושב|בקרת אקלים|תאורה|חיישני חנייה|מצלמ/,
+  pollution: /זיהום|דרגת זיהום|פליט|CO2/i,
   price: /מחיר|מחירון|₪/,
-  engine: /מנוע|תצרוכת|נפח מנוע|מידות|תיבת הילוכים|הספק/,
-  legal: /נתוני היצרן|המידע והנתונים המופיעים|תקן EU|כפוף לתנאי|ט\.?ל\.?ח/,
+  engine: /מנוע|תצרוכת|נפח מנוע|מידות|תיבת הילוכים|הספק|מומנט|בוכנות|שסתומים|בסיס גלגלים|כושר גרירה|משקל עצמי|תאוצה/,
+  units: /כ["׳]?ס|סמ["׳]?ק|ק["׳]?ג|ק["׳]?מ|קמ["׳]?ש|מ["׳]?מ|קוט["׳]?ש|נ["׳]?מ|\bhp\b|\bkW\b|\bNm\b/i,
+  legal: /נתוני היצרן|המידע והנתונים המופיעים|תקן EU|כפוף לתנאי|ט\.?ל\.?ח|להמחשה בלבד|אחריות/,
 } as const;
+
+/** Does this region's OWN text look like a technical-spec block (key/value rows + numbers)? */
+function looksLikeSpec(r: Region): boolean {
+  const t = r.text;
+  if (!t) return false;
+  const digits = (t.match(/\d/g) || []).length;
+  const units = (t.match(KW.units) || []).length;
+  if (units >= 2) return true;
+  if (KW.engine.test(t) && digits >= 3) return true;
+  // a dense numeric cluster in a small font (a spec column collapsed into one region)
+  return r.medFont > 0 && r.medFont <= 11 && digits >= 8 && r.count >= 4;
+}
 
 export function classifyPage(
   page: PageIR,
@@ -229,9 +243,12 @@ export function classifyPage(
     return { role: 'back', evidence: ev };
   }
 
-  // dense small-font grid → technical spec table
-  if (n >= 40 && smallRatio >= 0.55) {
-    ev.push(`dense grid: ${n} runs, ${(smallRatio * 100) | 0}% small-font`, hit('engine') ? 'engine terms' : 'tabular');
+  // technical spec table: a dense small-font grid, OR (for decks/larger layouts) engine terms
+  // backed by lots of numbers + units — so a 16:9 spec page isn't mistaken for a feature page.
+  const digitCount = (allText.match(/\d/g) || []).length;
+  const unitCount = (allText.match(KW.units) || []).length;
+  if ((n >= 40 && smallRatio >= 0.55) || (hit('engine') && digitCount >= 20 && unitCount >= 1)) {
+    ev.push(`spec: ${n} runs, ${(smallRatio * 100) | 0}% small-font, ${digitCount} digits`, hit('engine') ? 'engine terms' : 'tabular');
     return { role: 'spec', evidence: ev };
   }
 
@@ -242,8 +259,8 @@ export function classifyPage(
 
   if (hit('price')) { ev.push('price terms'); return { role: 'price', evidence: ev }; }
 
-  if (hit('colors') && (hit('wheels') || /בחר את הצבע/.test(allText)) && index >= total - 4) {
-    ev.push('colours + wheels selection near end');
+  if ((hit('colors') || hit('wheels')) && index >= total - 5) {
+    ev.push('colours / wheels selection near end');
     return { role: 'colors', evidence: ev };
   }
 
@@ -267,17 +284,37 @@ export function classifyPage(
 // ---------------------------------------------------------------------------
 // Slot kind inference
 // ---------------------------------------------------------------------------
+/**
+ * Infer a slot's kind. CONTENT-FIRST: each region is classified by its OWN text/shape, so a
+ * region's kind no longer just inherits the page role (the bug behind "spec table → marketing
+ * text" and "equipment list → colours"). The page role is only a fallback for ambiguous regions.
+ */
 function slotKind(role: PageRole, r: Region, isLargestText: boolean): SlotKind {
   if (r.blockType === 'shape') return 'background';
-  if (r.blockType === 'image') return role === 'cover' || role === 'feature' ? 'hero-image' : 'image';
-  if (KW.legal.test(r.text)) return 'legal';
+  if (r.blockType === 'image') {
+    // a small image high on the page is almost always a brand logo, not a hero photo
+    const small = r.bbox.width <= 200 && r.bbox.height <= 120;
+    if (small && r.bbox.y <= 120) return 'logo';
+    return role === 'cover' || role === 'feature' ? 'hero-image' : 'image';
+  }
+  const t = r.text || '';
+  // strong content signals win regardless of the page role
+  if (KW.legal.test(t) && t.length > 60) return 'legal';
+  if (KW.pollution.test(t)) return 'pollution';
+  if (KW.price.test(t)) return 'price';
+  if (looksLikeSpec(r)) return 'spec-table';
+  if (KW.wheels.test(t) && !KW.colors.test(t)) return 'wheels';
+  if (KW.colors.test(t) && !KW.safety.test(t) && !KW.equipment.test(t)) return 'colors';
+  if (KW.safety.test(t)) return 'safety';
+  if (KW.equipment.test(t)) return 'safety'; // equipment lists ride the safety/feature slot
   if (role === 'cover' && isLargestText) return 'model-name';
+  if (isLargestText && r.maxFont >= 18) return 'heading';
+  // page-role fallback only for regions with no strong signal of their own
   if (role === 'spec') return 'spec-table';
-  if (role === 'colors') return KW.wheels.test(r.text) && !KW.colors.test(r.text) ? 'wheels' : 'colors';
+  if (role === 'colors') return 'colors';
   if (role === 'safety') return 'safety';
   if (role === 'price') return 'price';
-  if (role === 'back') return KW.pollution.test(r.text) ? 'pollution' : 'legal';
-  if (isLargestText && r.maxFont >= 18) return 'heading';
+  if (role === 'back') return 'legal';
   return 'marketing-text';
 }
 

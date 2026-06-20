@@ -15,8 +15,11 @@ interface Props {
   mode: ViewMode;
   fontFamily?: string;        // brand font for imported text
   selectedId?: string | null;
+  /** All currently-selected block ids (multi-select); outlines every one. */
+  selectedIds?: Set<string>;
   editingId?: string | null;
-  onSelect?: (id: string | null) => void;
+  /** `additive` (shift/⌘/ctrl-click) toggles the id in the multi-selection. */
+  onSelect?: (id: string | null, additive?: boolean) => void;
   onStartEdit?: (id: string) => void;
   onChangeText?: (id: string, text: string) => void;
   onResize?: (id: string, box: { x: number; y: number; width: number; height: number }) => void;
@@ -30,7 +33,9 @@ interface Props {
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se';
 
-export function PageView({ page, scale, mode, fontFamily, selectedId, editingId, onSelect, onStartEdit, onChangeText, onResize, onCommit, editingCell, onStartEditCell, onChangeCell, onCommitCell }: Props) {
+export function PageView({ page, scale, mode, fontFamily, selectedId, selectedIds, editingId, onSelect, onStartEdit, onChangeText, onResize, onCommit, editingCell, onStartEditCell, onChangeCell, onCommitCell }: Props) {
+  const isSel = (id: string) => selectedIds ? selectedIds.has(id) : selectedId === id;
+  const singleSel = !selectedIds || selectedIds.size <= 1;
   const w = page.width * scale;
   const h = page.height * scale;
   const showRaster = mode === 'original' || mode === 'compare';
@@ -42,7 +47,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, editingId,
   // free-drag move of any block (click selects; drag past threshold moves)
   const startMove = (b: BlockIR, e: React.MouseEvent) => {
     e.stopPropagation();
-    onSelect?.(b.id);
+    onSelect?.(b.id, e.shiftKey || e.metaKey || e.ctrlKey);
     const sx = e.clientX, sy = e.clientY, ox = b.x, oy = b.y;
     let moved = false;
     const move = (ev: MouseEvent) => {
@@ -84,7 +89,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, editingId,
       )}
 
       {/* shape blocks (design panels/strips) — under images & text, render-only */}
-      {showBlocks && page.blocks.filter(isShapeBlock).sort((a, b) => a.zIndex - b.zIndex).map((b: ShapeBlockIR) => (
+      {showBlocks && page.blocks.filter(isShapeBlock).filter((b) => !b.deleted).sort((a, b) => a.zIndex - b.zIndex).map((b: ShapeBlockIR) => (
         <div key={b.id} style={{
           position: 'absolute', left: b.x * scale, top: b.y * scale, width: b.width * scale, height: b.height * scale,
           background: b.fill || 'transparent', borderRadius: (b.radius || 0) * scale,
@@ -94,8 +99,8 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, editingId,
       ))}
 
       {/* image blocks (under text) */}
-      {showBlocks && page.blocks.filter(isImageBlock).map((b: ImageBlockIR) => {
-        const selected = selectedId === b.id;
+      {showBlocks && page.blocks.filter(isImageBlock).filter((b) => !b.deleted).map((b: ImageBlockIR) => {
+        const selected = isSel(b.id);
         return (
           <img key={b.id} src={b.src} alt="" draggable={false}
             onMouseDown={interactive ? (e) => startMove(b, e) : undefined}
@@ -111,8 +116,8 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, editingId,
       })}
 
       {/* table blocks (editable spec grid) */}
-      {showBlocks && page.blocks.filter(isTableBlock).map((b: TableBlockIR) => {
-        const selected = selectedId === b.id;
+      {showBlocks && page.blocks.filter(isTableBlock).filter((b) => !b.deleted).map((b: TableBlockIR) => {
+        const selected = isSel(b.id);
         const rh = b.rows.length ? b.height / b.rows.length : b.rowHeight;
         return (
           <div key={b.id}
@@ -170,12 +175,12 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, editingId,
         );
       })}
 
-      {showBlocks && page.blocks.filter(isTextBlock).map((b: TextBlockIR) => {
+      {showBlocks && page.blocks.filter(isTextBlock).filter((b) => !b.deleted).map((b: TextBlockIR) => {
         if (interactive && editingId === b.id) {
           return <TextEditOverlay key={b.id} block={b} scale={scale} fontFamily={fontFamily}
             onChange={(t) => onChangeText?.(b.id, t)} onCommit={() => onCommit?.()} />;
         }
-        const selected = selectedId === b.id;
+        const selected = isSel(b.id);
         // a single-line box must not wrap (matches the vector export, which clips to the box)
         const oneLine = b.height <= b.fontSize * (b.lineHeight || 1.2) * 1.5;
         return (
@@ -200,10 +205,10 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, editingId,
         );
       })}
 
-      {/* resize handles on the selected (non-editing) text block */}
-      {interactive && selectedId && editingId !== selectedId && (() => {
+      {/* resize handles on the selected (non-editing) block — single selection only */}
+      {interactive && selectedId && singleSel && editingId !== selectedId && (() => {
         const b = page.blocks.find((x) => x.id === selectedId);
-        if (!b) return null;
+        if (!b || b.deleted) return null;
         return (['nw', 'ne', 'sw', 'se'] as Corner[]).map((c) => (
           <div key={c} onMouseDown={(e) => startResize(b, c, e)}
             style={{

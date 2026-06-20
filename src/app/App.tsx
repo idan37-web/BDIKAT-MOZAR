@@ -25,8 +25,10 @@ export function App() {
   const [cur, setCur] = React.useState(0);
   const [mode, setMode] = React.useState<ViewMode>('editable');
   const [sel, setSel] = React.useState<string | null>(null);
+  const [multi, setMulti] = React.useState<Set<string>>(() => new Set());
   const [editing, setEditing] = React.useState<string | null>(null);
   const [editingCell, setEditingCell] = React.useState<CellRef | null>(null);
+  const clearSel = () => { setSel(null); setMulti(new Set()); setEditing(null); setEditingCell(null); };
   const [exporting, setExporting] = React.useState(false);
   const [exportErr, setExportErr] = React.useState<string | null>(null);
   const [saveState, setSaveState] = React.useState<'idle' | 'saving' | 'saved'>('idle');
@@ -68,9 +70,34 @@ export function App() {
   const bf = doc ? brandFont(doc.brand || '') : null;
   React.useEffect(() => { if (bf) ensureFontFace(bf); }, [bf]);
 
+  // soft-delete the selected block(s): hidden in the editor + skipped on export
+  const deleteSelected = React.useCallback(() => {
+    setDoc((d) => {
+      if (!d) return d;
+      const ids = multi.size ? multi : (sel ? new Set([sel]) : new Set<string>());
+      if (!ids.size) return d;
+      return { ...d, pages: d.pages.map((p, i) => i !== cur ? p : { ...p, blocks: p.blocks.map((b) => ids.has(b.id) ? { ...b, deleted: true, dirty: true } : b) }) };
+    });
+    setSel(null); setMulti(new Set()); setEditing(null); setEditingCell(null);
+  }, [multi, sel, cur]);
+
+  // Delete/Backspace removes the selection (unless typing in a field)
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (editing || editingCell || (!multi.size && !sel)) return;
+      e.preventDefault();
+      deleteSelected();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [deleteSelected, editing, editingCell, multi, sel]);
+
   const openDoc = (d: DocumentIR, templateId?: string) => {
     templateIdRef.current = templateId;
-    setDoc(d); setScreen('import'); setCur(0); setSel(null); setEditing(null);
+    setDoc(d); setScreen('import'); setCur(0); clearSel();
   };
   const goGenerate = (spec?: TemplateSpec) => { setGenSpec(spec || null); setScreen('generate'); };
   if (!doc && screen === 'learn') return <TemplateScreen onBack={() => setScreen('import')} onGenerate={goGenerate} />;
@@ -188,7 +215,7 @@ export function App() {
         {/* page rail */}
         <div style={{ width: 116, flexShrink: 0, overflowY: 'auto', padding: 10, borderInlineEnd: '1px solid var(--line)', background: 'var(--surface-2)' }}>
           {doc.pages.map((p, i) => (
-            <button key={p.id} onClick={() => { setCur(i); setSel(null); setEditing(null); }}
+            <button key={p.id} onClick={() => { setCur(i); clearSel(); }}
               style={{ display: 'block', width: '100%', marginBottom: 8, cursor: 'pointer', border: i === cur ? '2px solid var(--accent)' : '1px solid var(--line)', borderRadius: 6, overflow: 'hidden', background: '#fff', aspectRatio: `${p.width}/${p.height}` }}>
               {p.previewImage && <img src={p.previewImage} alt="" style={{ width: '100%', display: 'block' }} />}
             </button>
@@ -199,8 +226,17 @@ export function App() {
         <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: 28, background: 'rgba(255,255,255,.14)' }}>
           <PageView
             page={page} scale={scale} mode={mode} fontFamily={brandFamily}
-            selectedId={sel} editingId={editing}
-            onSelect={(id) => { setSel(id); if (editing && editing !== id) setEditing(null); setEditingCell(null); }}
+            selectedId={sel} selectedIds={multi} editingId={editing}
+            onSelect={(id, additive) => {
+              if (id == null) { clearSel(); return; }
+              setSel(id);
+              setMulti((prev) => {
+                if (additive) { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; }
+                return new Set([id]);
+              });
+              if (editing && editing !== id) setEditing(null);
+              setEditingCell(null);
+            }}
             onStartEdit={(id) => { setSel(id); setEditing(id); }}
             onChangeText={(id, text) => patchBlock(id, { text })}
             onResize={handleResize}
@@ -215,7 +251,14 @@ export function App() {
         {/* properties */}
         <div style={{ width: 264, flexShrink: 0, borderInlineStart: '1px solid var(--line)', background: 'var(--surface-2)', padding: 16, overflowY: 'auto' }}>
           {mode !== 'editable' ? (
-            <p style={{ color: 'var(--ink-3)', fontSize: 13 }}>עבור למצב <b>עריכה</b> כדי לבחור ולערוך. קליק=בחירה · גרירה=הזזה · דאבל-קליק=עריכת טקסט · פינות=שינוי גודל.</p>
+            <p style={{ color: 'var(--ink-3)', fontSize: 13 }}>עבור למצב <b>עריכה</b> כדי לבחור ולערוך. קליק=בחירה · Shift/⌘-קליק=בחירה מרובה · גרירה=הזזה · דאבל-קליק=עריכה · Delete=מחיקה.</p>
+          ) : multi.size > 1 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ fontWeight: 800 }}>{multi.size} אלמנטים נבחרו</div>
+              <p style={{ fontSize: 12.5, color: 'var(--ink-2)', margin: 0 }}>Shift/⌘-קליק מוסיף/מסיר מהבחירה. אפשר למחוק את כולם יחד (או מקש Delete).</p>
+              <button className="btn btn-sm" onClick={deleteSelected} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 12px' }}>מחק {multi.size} אלמנטים</button>
+              <button className="btn btn-ghost btn-sm" onClick={clearSel}>בטל בחירה</button>
+            </div>
           ) : selImage ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ fontWeight: 800 }}>תמונה</div>
@@ -248,6 +291,7 @@ export function App() {
                 </label>
               </div>
               <button className="btn btn-ghost btn-sm" onClick={() => { const o = selImage.originalBBox; patchBlock(selImage.id, { src: selImage.originalImageRef || selImage.src, fit: 'cover', ...(o ? { x: o.x, y: o.y, width: o.width, height: o.height } : {}) }); }}>איפוס</button>
+              <button className="btn btn-ghost btn-sm" onClick={deleteSelected} style={{ color: 'var(--danger)' }}>מחק תמונה</button>
             </div>
           ) : selTable ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -285,9 +329,10 @@ export function App() {
                   <input type="number" value={Math.round(selTable.width)} onChange={(e) => patchBlock(selTable.id, { width: +e.target.value })} style={{ width: '100%', marginTop: 4, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)' }} />
                 </label>
               </div>
+              <button className="btn btn-ghost btn-sm" onClick={deleteSelected} style={{ color: 'var(--danger)' }}>מחק טבלה</button>
             </div>
           ) : !selBlock ? (
-            <p style={{ color: 'var(--ink-3)', fontSize: 13 }}>בחר אלמנט (קליק) — טקסט, תמונה או טבלה. דאבל-קליק לעריכה.</p>
+            <p style={{ color: 'var(--ink-3)', fontSize: 13 }}>בחר אלמנט (קליק) — טקסט, תמונה או טבלה. Shift/⌘-קליק לבחירה מרובה. Delete למחיקה.</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ fontWeight: 800 }}>תיבת טקסט</div>
@@ -337,6 +382,7 @@ export function App() {
               <div style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--mono)' }} dir="ltr">
                 x{Math.round(selBlock.x)} y{Math.round(selBlock.y)} · {selBlock.direction} · {selBlock.dirty ? 'edited' : 'original'}
               </div>
+              <button className="btn btn-ghost btn-sm" onClick={deleteSelected} style={{ color: 'var(--danger)' }}>מחק טקסט</button>
             </div>
           )}
         </div>

@@ -22,6 +22,20 @@ expect('image objects decoded headlessly (no DOM)', imgs.length >= 20);
 expect('sources are real data URLs (png/jpeg)', imgs.every((i) => /^data:image\/(png|jpeg);base64,/.test(i.src)));
 expect('no render-crop fallback needed (clean sources)', imgs.every((i) => i.src.length > 64));
 
+// dedupe: no two image blocks on the same page heavily overlap (the black-box duplicate is dropped)
+const iouBB = (a: typeof imgs[0], b: typeof imgs[0]) => {
+  const ix = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  const inter = ix * iy; const uni = a.width * a.height + b.width * b.height - inter;
+  return uni <= 0 ? 0 : inter / uni;
+};
+let overlaps = 0;
+for (const p of doc.pages) {
+  const pi = p.blocks.filter(isImageBlock);
+  for (let i = 0; i < pi.length; i++) for (let j = i + 1; j < pi.length; j++) if (iouBB(pi[i], pi[j]) > 0.8) overlaps++;
+}
+expect('duplicate overlapping images removed', overlaps === 0);
+
 // REGRESSION (black-swatch bug): in the browser pdf.js gives an ImageBitmap (the `bitmap`
 // branch). A transparent-background swatch MUST be detected as having alpha → saved as PNG,
 // never opaque JPEG (which turns the transparent areas black).

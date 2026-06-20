@@ -65,6 +65,25 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   SAME editor and exports via the SAME vector pipeline. UI: "יצירת קטלוג" screen. `npm run verify:gen` gates it
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
 
+## User-control + accuracy round (post-Milestone-D feedback)
+- **Content-driven slot classification** (`templateLearning.slotKind`): each region is classified by its
+  OWN text/shape, not just the page role — fixes "spec table → marketing-text" and "equipment list →
+  colours". `classifyPage` also detects a spec page on a 16:9 deck (engine terms + many digits/units, not
+  only the dense-grid rule). Verified on the RIFTER deck: colours page equipment → safety, spec page → spec-table.
+- **Ignore a slot** (`SlotSpec.ignored`): excluded from generation (`generateCatalog`/`validateCatalog`/
+  `dynamicSlots` skip it). Gate: `verify:gen` asserts an ignored slot's content is absent.
+- **Editor object management** (`App`/`PageView`): DELETE (button + Delete/Backspace key, soft `deleted`
+  flag, hidden in editor + skipped on export), MULTI-SELECT (shift/⌘/ctrl-click → `selectedIds` set, outlines
+  all), and BULK delete. **Template review** (`TemplateScreen`): multi-select slots + bulk set-kind /
+  dynamic-fixed / ignore / remove; per-slot ignore + remove.
+- **Image dedupe** (`importPdf.dedupeImages`): pdf.js emits, for one SMasked picture, BOTH a transparent
+  RGBA (→PNG) and an opaque RGB whose masked-out bg is BLACK (→JPEG); keeping the black one made black boxes
+  around cut-out cars. Dedupe overlapping image ops, preferring the alpha PNG. Gate: `verify:images` asserts
+  no two image blocks overlap >0.8 IoU. Pixel-confirmed on Berlingo (side-view cars, no black boxes).
+- DEFERRED (next round): extracting VECTOR brand logos, QR/barcode graphics, and the colour bars of the
+  pollution/safety-rating tables (they're vector/shape graphics not yet captured; the user can add/ignore
+  manually for now).
+
 ## CRITICAL GOTCHAS (hard-won — do not regress)
 -1. **Bold + transparent-image (browser) fixes.** (a) **Bold**: pdf.js text items carry an internal
     `fontName` (`g_d0_f1`) that never reveals weight; resolve the REAL name via `page.commonObjs.get(name).name`

@@ -51,6 +51,13 @@ const pdf = await exportPdf(doc, fontBytes);
 const header = String.fromCharCode(...pdf.slice(0, 5));
 expect('export produced a real PDF', header === '%PDF-' && pdf.length > 5000);
 
+// ignored slots are excluded from generation entirely
+modelSlot.ignored = true;
+const docIgnored = generateCatalog(tpl, bindings);
+const textIgnored = docIgnored.pages.flatMap((p) => p.blocks.filter(isTextBlock));
+expect('ignored slot is excluded from generation', !textIgnored.some((b) => b.text === 'פיג׳ו 408 חדש'));
+modelSlot.ignored = false;
+
 console.log(`generated ${doc.pages.length} pages · ${allText.length} text blocks · PDF ${(pdf.length / 1024).toFixed(0)}KB`);
 let ok = true;
 for (const c of checks) { console.log(`${c.pass ? '✓' : '✗'} ${c.name}`); if (!c.pass) ok = false; }

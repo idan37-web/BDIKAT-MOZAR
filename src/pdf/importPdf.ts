@@ -1,6 +1,6 @@
 // Stage 2 (C.4): turn an uploaded PDF (ArrayBuffer) into a DocumentIR using pdf.js.
 // The imported IR — never IMPORT3008/IMPORTC3 — is the source of truth after upload.
-import type { DocumentIR, PageIR, ImageBlockIR, ShapeBlockIR } from '../types/catalog';
+import type { BBox, DocumentIR, PageIR, ImageBlockIR, ShapeBlockIR } from '../types/catalog';
 import { extractTextBlocks } from './extractLayout';
 import { renderPageCanvas, cropCanvasErasingText } from './renderPage';
 import { walkPage, resolveImage, type ShapeOp, type MakeCanvas } from './extractImages';
@@ -107,7 +107,7 @@ export async function importPdf(
       originalPdfPageIndex: n - 1,
       previewImage,
       // paint order: shapes (under) → images → text (on top); each keeps its op-order zIndex
-      blocks: [...shapeBlocks, ...imageBlocks, ...textBlocks],
+      blocks: [...shapeBlocks, ...dedupeImages(imageBlocks), ...textBlocks],
     });
   }
 
@@ -122,6 +122,27 @@ export async function importPdf(
     brand,
     pages,
   };
+}
+
+/**
+ * Drop duplicate image ops painted at the same spot. pdf.js often emits, for one SMasked
+ * picture, BOTH a transparent RGBA version (→ PNG) and an opaque RGB version whose masked-out
+ * background is BLACK (→ JPEG). Keeping the black one produced black boxes around cut-out cars.
+ * Prefer the alpha PNG; otherwise the larger source.
+ */
+function dedupeImages(imgs: ImageBlockIR[]): ImageBlockIR[] {
+  const bb = (b: ImageBlockIR): BBox => ({ x: b.x, y: b.y, width: b.width, height: b.height });
+  const keep: ImageBlockIR[] = [];
+  for (const im of imgs) {
+    const di = keep.findIndex((k) => iou(bb(k), bb(im)) > 0.8);
+    if (di === -1) { keep.push(im); continue; }
+    const cur = keep[di];
+    const curPng = cur.src.startsWith('data:image/png');
+    const imPng = im.src.startsWith('data:image/png');
+    if (curPng !== imPng) keep[di] = curPng ? cur : im; // prefer the alpha (PNG) version
+    else if (im.width * im.height > cur.width * cur.height) keep[di] = im; // else the larger
+  }
+  return keep;
 }
 
 /** Merge near-duplicate filled panels (cap 50 by area) and keep distinct rules/lines (cap 400). */

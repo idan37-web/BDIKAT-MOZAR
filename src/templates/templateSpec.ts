@@ -72,6 +72,8 @@ export interface SlotSpec {
   variants: number;
   /** true if learning had real cross-document evidence (>=2 docs matched here). */
   crossDocEvidence: boolean;
+  /** User marked this slot to be IGNORED — excluded from generation entirely. */
+  ignored?: boolean;
 }
 
 /** Fixed design furniture (panels + gridlines) emitted wholesale at generation — NOT
