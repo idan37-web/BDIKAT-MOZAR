@@ -47,19 +47,38 @@ function buildPrompt(spec: TemplateSpec): string {
   ].join('\n');
 }
 
-/** Call Gemini once to classify the whole template. Throws on network/parse error. */
+/** Call Gemini once to classify the whole template. Retries transient 429/503 with backoff.
+ * Throws (with a friendly message) on quota/auth/parse errors. */
 export async function classifyWithGemini(spec: TemplateSpec, apiKey: string, model = GEMINI_DEFAULT_MODEL): Promise<AiResult> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const body = {
     contents: [{ role: 'user', parts: [{ text: buildPrompt(spec) }] }],
     generationConfig: { temperature: 0, responseMimeType: 'application/json' },
   };
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const json = await res.json();
-  const text: string = json?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text || '').join('') || '';
-  if (!text) throw new Error('Gemini החזיר תשובה ריקה');
-  return parseAiResult(text);
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  let lastErr = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.ok) {
+      const json = await res.json();
+      const text: string = json?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text || '').join('') || '';
+      if (!text) throw new Error('Gemini החזיר תשובה ריקה');
+      return parseAiResult(text);
+    }
+    const errText = (await res.text()).slice(0, 400);
+    lastErr = `Gemini ${res.status}: ${errText}`;
+    if (res.status === 429 || res.status === 503) {
+      // honour an explicit retryDelay if present, else exponential backoff
+      const m = /"retryDelay":\s*"?(\d+)s/.exec(errText);
+      const wait = m ? Math.min(30, +m[1]) * 1000 : 1500 * (attempt + 1) ** 2;
+      if (attempt < 2) { await sleep(wait); continue; }
+      throw new Error(`חריגת מכסה (429). נסה שוב בעוד דקה, או בחר מודל אחר (למשל gemini-2.0-flash-lite). מקור: ${errText.slice(0, 160)}`);
+    }
+    if (res.status === 400 || res.status === 403) throw new Error(`מפתח/הרשאה (${res.status}). ודא מפתח תקין מ-aistudio.google.com ושה-Generative Language API מופעל. ${errText.slice(0, 160)}`);
+    if (res.status === 404) throw new Error(`המודל "${model}" לא נמצא. בחר מודל אחר. ${errText.slice(0, 120)}`);
+    throw new Error(lastErr);
+  }
+  throw new Error(lastErr || 'Gemini: נכשל לאחר 3 ניסיונות');
 }
 
 /** Tolerant JSON parse (strips ``` fences / surrounding prose). */

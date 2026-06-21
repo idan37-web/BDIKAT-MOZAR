@@ -11,7 +11,9 @@ import { downloadTemplate } from '../templates/storage';
 import { saveTemplate } from '../store/library';
 import { blockScreenRect } from '../editor/coords';
 import { classifyWithGemini, applyAiToSpec } from '../ai/geminiClassify';
-import { getGeminiKey, setGeminiKey } from '../ai/settings';
+import { getGeminiKey, setGeminiKey, getGeminiModel, setGeminiModel } from '../ai/settings';
+
+const AI_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-1.5-flash'];
 
 const SLOT_KINDS: SlotKind[] = [
   'model-name', 'heading', 'marketing-text', 'hero-image', 'image',
@@ -38,18 +40,19 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
   const inputRef = React.useRef<HTMLInputElement>(null);
   // optional AI-assist (Gemini)
   const [aiKey, setAiKey] = React.useState('');
+  const [aiModel, setAiModel] = React.useState('gemini-2.0-flash');
   const [aiOpen, setAiOpen] = React.useState(false);
   const [aiBusy, setAiBusy] = React.useState(false);
   const [aiMsg, setAiMsg] = React.useState<string | null>(null);
-  React.useEffect(() => { setAiKey(getGeminiKey()); }, []);
+  React.useEffect(() => { setAiKey(getGeminiKey()); setAiModel(getGeminiModel()); }, []);
 
   async function refineWithAi() {
     if (!tpl) return;
     const key = aiKey.trim();
     if (!key) { setAiMsg('הזן מפתח Gemini API (חינמי) כדי להפעיל.'); setAiOpen(true); return; }
-    setGeminiKey(key); setAiBusy(true); setAiMsg('שולח לסיווג AI…');
+    setGeminiKey(key); setGeminiModel(aiModel); setAiBusy(true); setAiMsg(`שולח לסיווג AI (${aiModel})…`);
     try {
-      const ai = await classifyWithGemini(tpl, key);
+      const ai = await classifyWithGemini(tpl, key, aiModel);
       const { spec, stats } = applyAiToSpec(tpl, ai);
       setTpl(spec); setSaved(false); setSelSlot(null); setSelSlots(new Set());
       setAiMsg(`✓ AI עדכן ${stats.pagesChanged} עמודים ו-${stats.slotsChanged} סלוטים. בדוק ותקן לפי הצורך.`);
@@ -201,8 +204,13 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
               <span style={{ fontSize: 12, fontWeight: 700 }}>Gemini API key:</span>
               <input type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} placeholder="מפתח חינמי מ-aistudio.google.com" dir="ltr"
                 style={{ flex: 1, minWidth: 220, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)', fontFamily: 'var(--mono)' }} />
-              <button className="btn btn-sm" onClick={() => { setGeminiKey(aiKey); setAiMsg('✓ המפתח נשמר במכשיר זה.'); }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>שמור מפתח</button>
-              <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>נשמר מקומית בדפדפן; נשלח רק ל-Google בעת "שפר עם AI".</span>
+              <button className="btn btn-sm" onClick={() => { setGeminiKey(aiKey); setGeminiModel(aiModel); setAiMsg('✓ המפתח נשמר במכשיר זה.'); }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>שמור מפתח</button>
+              <label style={{ fontSize: 12, fontWeight: 700 }}>מודל
+                <select value={aiModel} onChange={(e) => { setAiModel(e.target.value); setGeminiModel(e.target.value); }} dir="ltr" style={{ marginInlineStart: 6, padding: 5, borderRadius: 8, border: '1px solid var(--line-2)' }}>
+                  {AI_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </label>
+              <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>נשמר מקומית; נשלח רק ל-Google בעת "שפר עם AI". 429? נסה flash-lite או המתן דקה.</span>
             </>
           )}
           {aiMsg && <span style={{ fontSize: 12.5, color: aiMsg.startsWith('שגיאת') ? 'var(--danger)' : 'var(--ink-2)' }}>{aiMsg}</span>}
