@@ -6,6 +6,7 @@
 import {
   PDFDocument, rgb, type RGB, type PDFImage, type PDFPage,
   pushGraphicsState, popGraphicsState, rectangle, clip, endPath,
+  translate, scale, rotateDegrees,
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { logicalToVisual } from './hebrew';
@@ -94,13 +95,18 @@ function drawImageBlock(page: PDFPage, pageH: number, b: ImageBlockIR, img: PDFI
     drawX = b.x + (b.width - drawW) / 2;
     drawY = boxBottom + (b.height - drawH) / 2;
   } // 'fill' → stretch to the box (drawW/H already = box)
+  void drawX; void drawY;
 
-  const needsClip = fit === 'cover' || drawW > b.width + 0.5 || drawH > b.height + 0.5;
-  if (needsClip) {
-    page.pushOperators(pushGraphicsState(), rectangle(b.x, boxBottom, b.width, b.height), clip(), endPath());
-  }
-  page.drawImage(img, { x: drawX, y: drawY, width: drawW, height: drawH });
-  if (needsClip) page.pushOperators(popGraphicsState());
+  // Clip to the axis-aligned box (page space), then transform around the box CENTRE so rotation /
+  // horizontal flip render correctly and stay clipped to the slot. Image is drawn centred.
+  const cx = b.x + b.width / 2;
+  const cy = pageH - (b.y + b.height / 2);
+  page.pushOperators(pushGraphicsState(), rectangle(b.x, boxBottom, b.width, b.height), clip(), endPath());
+  page.pushOperators(translate(cx, cy));
+  if (b.rotation) page.pushOperators(rotateDegrees(-b.rotation));
+  if (b.flipH) page.pushOperators(scale(-1, 1));
+  page.drawImage(img, { x: -drawW / 2, y: -drawH / 2, width: drawW, height: drawH });
+  page.pushOperators(popGraphicsState());
 }
 
 /**

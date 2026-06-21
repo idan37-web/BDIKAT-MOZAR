@@ -141,6 +141,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
               width: b.width * scale, height: b.height * scale,
               objectFit: b.fit || 'cover', userSelect: 'none',
               opacity: compare ? 0.6 : 1,
+              transform: `rotate(${b.rotation || 0}deg) scaleX(${b.flipH ? -1 : 1})`, transformOrigin: 'center',
               cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
               outline: selected ? '1.5px solid var(--accent)' : 'none',
             }} />

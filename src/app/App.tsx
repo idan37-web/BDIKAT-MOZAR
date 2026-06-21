@@ -20,7 +20,41 @@ const MODES: { id: ViewMode; label: string }[] = [
 ];
 
 export function App() {
-  const [doc, setDoc] = React.useState<DocumentIR | null>(null);
+  // doc state with UNDO/REDO history. setDoc is history-aware (coalesces rapid changes — e.g. a
+  // drag — into one undo step); resetHistory is used when opening a new document.
+  const [doc, setDocRaw] = React.useState<DocumentIR | null>(null);
+  const pastRef = React.useRef<DocumentIR[]>([]);
+  const futureRef = React.useRef<DocumentIR[]>([]);
+  const lastPushRef = React.useRef(0);
+  const [, forceHist] = React.useReducer((x: number) => x + 1, 0);
+  const setDoc = React.useCallback((updater: React.SetStateAction<DocumentIR | null>) => {
+    setDocRaw((prev) => {
+      const next = typeof updater === 'function' ? (updater as (p: DocumentIR | null) => DocumentIR | null)(prev) : updater;
+      if (!prev || next === prev) return next;
+      const now = Date.now();
+      if (now - lastPushRef.current > 500) { // new undo step only when >500ms since the last
+        pastRef.current.push(prev);
+        if (pastRef.current.length > 80) pastRef.current.shift();
+        futureRef.current = [];
+        forceHist();
+      }
+      lastPushRef.current = now;
+      return next;
+    });
+  }, []);
+  const resetHistory = (d: DocumentIR | null) => { pastRef.current = []; futureRef.current = []; lastPushRef.current = 0; setDocRaw(d); forceHist(); };
+  const undo = React.useCallback(() => {
+    if (!pastRef.current.length) return;
+    setDocRaw((cur) => { if (cur) futureRef.current.push(cur); return pastRef.current.pop()!; });
+    lastPushRef.current = 0; setSel(null); setMulti(new Set()); setEditing(null); setEditingCell(null); forceHist();
+  }, []);
+  const redo = React.useCallback(() => {
+    if (!futureRef.current.length) return;
+    setDocRaw((cur) => { if (cur) pastRef.current.push(cur); return futureRef.current.pop()!; });
+    lastPushRef.current = 0; setSel(null); setMulti(new Set()); setEditing(null); setEditingCell(null); forceHist();
+  }, []);
+  const canUndo = pastRef.current.length > 0;
+  const canRedo = futureRef.current.length > 0;
   const [screen, setScreen] = React.useState<'import' | 'learn' | 'generate'>('import');
   const [genSpec, setGenSpec] = React.useState<TemplateSpec | null>(null);
   const [fromGen, setFromGen] = React.useState(false);
@@ -99,6 +133,9 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+      if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); return; }
       if (editing || editingCell || (!multi.size && !sel)) return;
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); return; }
       const a = ARROWS[e.key];
@@ -106,11 +143,11 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deleteSelected, nudge, editing, editingCell, multi, sel]);
+  }, [deleteSelected, nudge, undo, redo, editing, editingCell, multi, sel]);
 
   const openDoc = (d: DocumentIR, templateId?: string) => {
     templateIdRef.current = templateId;
-    setDoc(d); setScreen('import'); setCur(0); clearSel();
+    resetHistory(d); setScreen('import'); setCur(0); clearSel();
   };
   const goGenerate = (spec?: TemplateSpec) => { setGenSpec(spec || null); setScreen('generate'); };
   if (!doc && screen === 'learn') return <TemplateScreen onBack={() => setScreen('import')} onGenerate={goGenerate} />;
@@ -255,6 +292,8 @@ export function App() {
           ))}
         </div>
         {mode === 'editable' && <button className="btn btn-ghost btn-sm" onClick={selectAll} style={{ fontSize: 12 }}>בחר הכל</button>}
+        <button className="btn btn-ghost btn-sm" onClick={undo} disabled={!canUndo} title="בטל (Ctrl/⌘+Z)" style={{ fontSize: 14, opacity: canUndo ? 1 : 0.4 }}>↶</button>
+        <button className="btn btn-ghost btn-sm" onClick={redo} disabled={!canRedo} title="חזור (Ctrl/⌘+Shift+Z)" style={{ fontSize: 14, opacity: canRedo ? 1 : 0.4 }}>↷</button>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 12, color: saveState === 'saved' ? 'var(--ok, #0a7d3b)' : 'var(--ink-3)' }}>
           {saveState === 'saving' ? 'שומר…' : saveState === 'saved' ? '✓ נשמר' : ''}
@@ -264,8 +303,8 @@ export function App() {
           style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', opacity: exporting ? 0.6 : 1 }}>
           {exporting ? 'מייצא…' : 'ייצוא PDF'}
         </button>
-        {fromGen && <button className="btn btn-ghost btn-sm" onClick={() => { setDoc(null); setFromGen(false); setScreen('generate'); }}>← חזרה ליצירה</button>}
-        <button className="btn btn-ghost btn-sm" onClick={() => { setFromGen(false); setDoc(null); }}>ייבוא אחר</button>
+        {fromGen && <button className="btn btn-ghost btn-sm" onClick={() => { resetHistory(null); setFromGen(false); setScreen('generate'); }}>← חזרה ליצירה</button>}
+        <button className="btn btn-ghost btn-sm" onClick={() => { setFromGen(false); resetHistory(null); }}>ייבוא אחר</button>
       </header>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
@@ -370,6 +409,14 @@ export function App() {
                   ))}
                 </div>
               </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>היפוך וסיבוב</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className={selImage.flipH ? 'btn btn-sm on' : 'btn btn-ghost btn-sm'} style={{ flex: 1 }} onClick={() => patchBlock(selImage.id, { flipH: !selImage.flipH })} title="היפוך אופקי">⇋ היפוך</button>
+                  <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={() => patchBlock(selImage.id, { rotation: (((selImage.rotation || 0) - 90) % 360 + 360) % 360 })} title="סיבוב נגד כיוון השעון">↺ 90°</button>
+                  <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={() => patchBlock(selImage.id, { rotation: ((selImage.rotation || 0) + 90) % 360 })} title="סיבוב עם כיוון השעון">↻ 90°</button>
+                </div>
+              </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <label style={{ fontSize: 12, fontWeight: 700, flex: 1 }}>רוחב
                   <input type="number" value={Math.round(selImage.width)} onChange={(e) => patchBlock(selImage.id, { width: +e.target.value })} style={{ width: '100%', marginTop: 4, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)' }} />
@@ -383,7 +430,7 @@ export function App() {
                 <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>
                 <button onClick={() => changeZ('back')} style={{ flex: 1, fontSize: 12 }}>⤓ לאחור</button>
               </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => { const o = selImage.originalBBox; patchBlock(selImage.id, { src: selImage.originalImageRef || selImage.src, fit: 'cover', ...(o ? { x: o.x, y: o.y, width: o.width, height: o.height } : {}) }); }}>איפוס</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => { const o = selImage.originalBBox; patchBlock(selImage.id, { src: selImage.originalImageRef || selImage.src, fit: 'cover', flipH: false, rotation: 0, ...(o ? { x: o.x, y: o.y, width: o.width, height: o.height } : {}) }); }}>איפוס</button>
               <button className="btn btn-ghost btn-sm" onClick={deleteSelected} style={{ color: 'var(--danger)' }}>מחק תמונה</button>
             </div>
           ) : selTable ? (

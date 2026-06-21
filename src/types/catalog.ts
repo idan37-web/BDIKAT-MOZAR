@@ -79,6 +79,8 @@ export interface ImageBlockIR extends BlockIR {
   /** Pointer back to the original embedded image (for re-use at full quality). */
   originalImageRef?: string;
   fit: ImageFit;
+  /** mirror horizontally (rotation lives on BlockIR.rotation, in degrees). */
+  flipH?: boolean;
   /** Crop as fractions of the source (0..1). */
   crop?: { fx: number; fy: number; fw: number; fh: number };
   /** Bounded-fallback only: solid cover color sampled from the page background. */

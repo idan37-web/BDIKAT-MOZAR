@@ -65,6 +65,19 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   SAME editor and exports via the SAME vector pipeline. UI: "יצירת קטלוג" screen. `npm run verify:gen` gates it
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
 
+## Feedback round 5 (undo/redo · image transforms · create-screen)
+- **Undo/Redo** (`App`): history-aware `setDoc` that COALESCES rapid changes (a drag = one undo step);
+  Ctrl/⌘+Z / Shift+Z / Ctrl+Y, header ↶ ↷ buttons (disabled when empty). `resetHistory` on open.
+- **Image flip/rotate**: `ImageBlockIR.flipH` + `BlockIR.rotation`; editor via CSS transform, export via a
+  pdf-lib matrix (clip to the box in page space, then translate-to-centre → rotate → flip → draw centred).
+  Pixel-confirmed (rotated/flipped car, not black). Panel: ⇋ היפוך / ↺↻ 90°; reset clears them.
+- **AI-assist (Gemini, optional)** — `src/ai/`: heuristics first, then "✨ שפר עם AI" refines roles/kinds via
+  Gemini Flash (one request, text-only). Model selector + 429/auth retry+messages. OFF by default; key local.
+  Gate `verify:ai` (parse/merge/immutability/invalid-enum).
+- **Create screen**: the clear row-based `SpecSheetEditor` is now the PRIMARY view (opens by default with a
+  starter sheet); generation uses the sheet only when it carries real data (`sheetHasData`), else the plain
+  template path — so an empty starter never wipes the learned content.
+
 ## Feedback round 4 (real templates)
 - **Natural multi-sheet workbook adapter** (`src/data/workbookAdapter.ts`) for the user's REAL Excel format:
   one TAB per category (יחידת הנעה / מידות ומשקלים / סוללה וטעינה → spec sections; בטיחות / אבזור → equipment

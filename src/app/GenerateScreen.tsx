@@ -42,6 +42,15 @@ function downloadBlob(name: string, blob: Blob) {
 const downloadCsv = (name: string, cells: string[][]) => downloadBlob(name, new Blob([toCSV(cells)], { type: 'text/csv;charset=utf-8' }));
 const downloadXlsx = (name: string, bytes: Uint8Array) => downloadBlob(name, new Blob([bytes as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
 
+/** Does the sheet carry real data (vs. an empty starter)? Only then drive generation from it. */
+function sheetHasData(s: SpecSheet | null): boolean {
+  return !!s && (
+    sheetStats(s).values > 0 || s.colors.length > 0 || !!s.marketingText || !!s.price ||
+    s.sections.some((sec) => sec.rows.some((r) => r.label.trim())) ||
+    s.features.some((c) => c.items.some((it) => it.label.trim()))
+  );
+}
+
 export function GenerateScreen({ initialSpec, onCreate, onBack }: {
   initialSpec?: TemplateSpec | null;
   onCreate: (doc: DocumentIR) => void;
@@ -63,15 +72,24 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
   const [issues, setIssues] = React.useState<SheetIssue[]>([]);
   const [dataErr, setDataErr] = React.useState<string | null>(null);
   const [dataName, setDataName] = React.useState<string>('');
-  const [editData, setEditData] = React.useState(false);
+  const [editData, setEditData] = React.useState(true);
+  // the clear row-based editor is the primary view: start it with an empty sheet to fill
+  React.useEffect(() => {
+    if (spec && editData && !sheet) {
+      const s = emptySheet(['גרסה 1', 'גרסה 2']);
+      s.sections.push({ title: 'מנוע', rows: [{ label: '', values: ['', ''] }] });
+      s.features.push({ title: 'בטיחות', items: [{ label: '', perTrim: [true, true] }] });
+      setSheet(s); setDataName('הזנה ידנית');
+    }
+  }, [spec?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // reset bindings + data when the template changes
   React.useEffect(() => { setBindings({}); setShowMissing(false); setSheet(null); setIssues([]); setDataErr(null); setDataName(''); }, [spec?.id]);
 
   // mapping report (which fields the sheet populates vs. what stays manual)
   const report = React.useMemo<{ mappings: FieldMapping[]; manual: FieldMapping[]; warnings: string[] } | null>(() => {
-    if (!spec || !sheet) return null;
-    const { mappings, manual, warnings } = mapSheetToCatalog(spec, sheet, {});
+    if (!spec || !sheetHasData(sheet)) return null;
+    const { mappings, manual, warnings } = mapSheetToCatalog(spec, sheet!, {});
     return { mappings, manual, warnings };
   }, [spec?.id, sheet]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -124,8 +142,8 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
     const family = bf ? `'${bf.family}', ${FALLBACK_HEBREW}` : FALLBACK_HEBREW;
     // Milestone D: when a structured sheet is loaded, populate spec/feature/colour pages from
     // it (with the manual form supplying images/overrides); otherwise the Stage-7 slot path.
-    const doc = sheet
-      ? mapSheetToCatalog(spec!, sheet, { bindings, measure: plainMeasure(family), title: 'מפרט טכני' }).doc
+    const doc = sheetHasData(sheet)
+      ? mapSheetToCatalog(spec!, sheet!, { bindings, measure: plainMeasure(family), title: 'מפרט טכני' }).doc
       : generateCatalog(spec!, bindings);
     // Milestone B: auto-fit text to its box before opening (shrink→wrap→grow→flag)
     autofitDocument(doc, canvasMeasureFor(family));
