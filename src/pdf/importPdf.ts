@@ -48,7 +48,7 @@ export async function importPdf(
     // so design panels/strips are captured even in a headless (renderPreviews:false) import.
     // Running it BEFORE text extraction also populates page.commonObjs with the fonts, so we
     // can resolve each item's REAL font name (→ correct bold detection).
-    const { images: imageOps, shapes: shapeOps, graphics: graphicOps } = await walkPage(page, (pdfjs as any).OPS, vp.height);
+    const { images: imageOps, shapes: shapeOps, graphics: graphicOps } = await walkPage(page, (pdfjs as any).OPS, vp.height, vp.width);
 
     const resolveFontName = (loadedName?: string): string | undefined => {
       if (!loadedName) return undefined;

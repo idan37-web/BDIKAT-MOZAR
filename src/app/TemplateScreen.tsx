@@ -216,6 +216,7 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
           <div style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 10 }}>
             עמוד {curPage + 1} · <b>{ROLE_HE[page.role] || page.role}</b>
             <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>{page.roleEvidence.join(' · ')}</div>
+            <button className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => { const ids = page.slots.map((s) => s.id); setSelSlots(new Set(ids)); setSelSlot(ids[ids.length - 1] || null); }}>בחר את כל הסלוטים בעמוד</button>
           </div>
           {selSlots.size > 1 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

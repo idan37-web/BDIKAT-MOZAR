@@ -44,7 +44,8 @@ export function ImportScreen({ onImported, onLearnTemplate, onGenerate, onOpenPr
   }
 
   return (
-    <div style={{ maxWidth: 720, margin: '40px auto', padding: '0 24px' }}>
+    <div style={{ height: '100vh', overflowY: 'auto' }}>
+    <div style={{ maxWidth: 720, margin: '40px auto', padding: '0 24px 60px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <h1 style={{ fontFamily: 'var(--display)', fontSize: 26, fontWeight: 800 }}>ייבוא מפרט PDF</h1>
         <div style={{ flex: 1 }} />
@@ -92,6 +93,7 @@ export function ImportScreen({ onImported, onLearnTemplate, onGenerate, onOpenPr
           ))}
         </Section>
       )}
+    </div>
     </div>
   );
 }

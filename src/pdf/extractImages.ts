@@ -55,7 +55,7 @@ function cmykToRgb(c: number, m: number, y: number, k: number): [number, number,
  * filled rectangles (design panels/strips) in one pass with a shared CTM stack. Shape
  * colours come straight from the fill colour ops (no raster sampling needed).
  */
-export async function walkPage(page: any, OPS: any, pageHeight: number): Promise<PageOps> {
+export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidth = Infinity): Promise<PageOps> {
   const ol = await page.getOperatorList();
   const fns: number[] = ol.fnArray; const args: any[] = ol.argsArray;
   let ctm: Mat = [...IDENT] as Mat; const stack: Mat[] = [];
@@ -115,8 +115,12 @@ export async function walkPage(page: any, OPS: any, pageHeight: number): Promise
     else if (isFill(fn) || isFillStroke(fn)) {
       if (pathBox && pathBox.length === 4) {
         const { minX, maxY, w, h } = xform(pathBox);
-        // significant, non-white panels only (white == page background → noise)
-        if (w >= 24 && h >= 10 && fill.toLowerCase() !== '#ffffff') {
+        // significant panels. WHITE is usually the page background (skip), EXCEPT a clearly
+        // bounded white card (≥60×30, not near-full-page) — those are real panels the layout
+        // sits on and were disappearing in the editor.
+        const isWhite = fill.toLowerCase() === '#ffffff';
+        const nearFull = w >= 0.9 * pageWidth && h >= 0.9 * pageHeight;
+        if (w >= 24 && h >= 10 && (!isWhite || (w >= 60 && h >= 30 && !nearFull))) {
           shapes.push({ opIndex: i, fill, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
         }
         recordInk(fill);
@@ -143,7 +147,7 @@ export async function walkPage(page: any, OPS: any, pageHeight: number): Promise
       const xs = pts.map((p) => p[0]); const ys = pts.map((p) => p[1]);
       const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
       const w = maxX - minX, h = maxY - minY;
-      if (w < 20 || h < 20) continue;
+      if (w < 10 || h < 10) continue; // keep small icons (was 20); tiny noise still excluded
       const bbox = { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) };
       if (fn === OPS.paintInlineImageXObject) images.push({ opIndex: i, bbox, inline: a?.[0], hadSMask: smaskActive });
       else if (fn === OPS.paintImageMaskXObject) images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, mask: true, hadSMask: smaskActive });

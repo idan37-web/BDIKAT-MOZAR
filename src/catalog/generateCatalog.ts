@@ -17,8 +17,9 @@ export interface SlotBinding {
 }
 export type BindingMap = Record<string, SlotBinding>;
 
-/** Dynamic slots the user MUST fill for a sensible catalog. */
-export const REQUIRED_KINDS = new Set<SlotKind>(['model-name', 'hero-image']);
+/** Dynamic slots the user MUST fill. Images are NOT required — an unbound image slot just
+ * leaves a neutral empty frame at the template position (the user can fill it later in the editor). */
+export const REQUIRED_KINDS = new Set<SlotKind>(['model-name']);
 
 export interface MissingSlot {
   pageIndex: number;

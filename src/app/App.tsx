@@ -10,6 +10,7 @@ import { PageView, type ViewMode, type CellRef } from './PageView';
 import { brandFont, ensureFontFace, FALLBACK_HEBREW, loadExportFonts } from './brandFont';
 import { exportPdf } from '../pdf/exportPdf';
 import { saveProject } from '../store/library';
+import { removeBackground } from './imageBg';
 
 const MODES: { id: ViewMode; label: string }[] = [
   { id: 'original', label: 'מקור' },
@@ -190,6 +191,33 @@ export function App() {
     return t;
   });
 
+  // select every (non-deleted) block on the current page
+  const selectAll = () => {
+    const ids = page.blocks.filter((b) => !b.deleted).map((b) => b.id);
+    if (!ids.length) return;
+    setMulti(new Set(ids)); setSel(ids[ids.length - 1]); setEditing(null); setEditingCell(null);
+  };
+  // bring the selection to the front / send to the back (z-order control)
+  const changeZ = (mode: 'front' | 'back') => {
+    const ids = multi.size ? multi : (sel ? new Set([sel]) : null);
+    if (!ids) return;
+    setDoc((d) => !d ? d : {
+      ...d,
+      pages: d.pages.map((p, i) => {
+        if (i !== cur) return p;
+        const zs = p.blocks.map((b) => b.zIndex ?? 0);
+        const maxZ = Math.max(0, ...zs), minZ = Math.min(0, ...zs);
+        let k = 1;
+        return { ...p, blocks: p.blocks.map((b) => ids.has(b.id) ? { ...b, zIndex: mode === 'front' ? maxZ + (k++) : minZ - (k++), dirty: true } : b) };
+      }),
+    });
+  };
+  // one-click background removal on the selected image
+  const removeBg = async () => {
+    if (!selImage) return;
+    try { const out = await removeBackground(selImage.src); patchBlock(selImage.id, { src: out }); } catch { /* ignore */ }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <header style={{ height: 56, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, padding: '0 18px', borderBottom: '1px solid var(--line)', background: 'var(--surface)' }}>
@@ -200,6 +228,7 @@ export function App() {
             <button key={m.id} className={mode === m.id ? 'on' : ''} onClick={() => { setMode(m.id); setEditing(null); }} style={{ fontSize: 12 }}>{m.label}</button>
           ))}
         </div>
+        {mode === 'editable' && <button className="btn btn-ghost btn-sm" onClick={selectAll} style={{ fontSize: 12 }}>בחר הכל</button>}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 12, color: saveState === 'saved' ? 'var(--ok, #0a7d3b)' : 'var(--ink-3)' }}>
           {saveState === 'saving' ? 'שומר…' : saveState === 'saved' ? '✓ נשמר' : ''}
@@ -258,6 +287,10 @@ export function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ fontWeight: 800 }}>{multi.size} אלמנטים נבחרו</div>
               <p style={{ fontSize: 12.5, color: 'var(--ink-2)', margin: 0 }}>Shift/⌘-קליק מוסיף/מסיר מהבחירה. אפשר למחוק את כולם יחד (או מקש Delete).</p>
+              <div className="seg">
+                <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>
+                <button onClick={() => changeZ('back')} style={{ flex: 1, fontSize: 12 }}>⤓ לאחור</button>
+              </div>
               <button className="btn btn-sm" onClick={deleteSelected} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 12px' }}>מחק {multi.size} אלמנטים</button>
               <button className="btn btn-ghost btn-sm" onClick={clearSel}>בטל בחירה</button>
             </div>
@@ -291,6 +324,11 @@ export function App() {
                 <label style={{ fontSize: 12, fontWeight: 700, flex: 1 }}>גובה
                   <input type="number" value={Math.round(selImage.height)} onChange={(e) => patchBlock(selImage.id, { height: +e.target.value })} style={{ width: '100%', marginTop: 4, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)' }} />
                 </label>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={removeBg}>הסר רקע (שקיפות)</button>
+              <div className="seg">
+                <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>
+                <button onClick={() => changeZ('back')} style={{ flex: 1, fontSize: 12 }}>⤓ לאחור</button>
               </div>
               <button className="btn btn-ghost btn-sm" onClick={() => { const o = selImage.originalBBox; patchBlock(selImage.id, { src: selImage.originalImageRef || selImage.src, fit: 'cover', ...(o ? { x: o.x, y: o.y, width: o.width, height: o.height } : {}) }); }}>איפוס</button>
               <button className="btn btn-ghost btn-sm" onClick={deleteSelected} style={{ color: 'var(--danger)' }}>מחק תמונה</button>
@@ -344,6 +382,10 @@ export function App() {
                 <label style={{ fontSize: 12, fontWeight: 700, flex: 1 }}>רוחב
                   <input type="number" value={Math.round(selTable.width)} onChange={(e) => patchBlock(selTable.id, { width: +e.target.value })} style={{ width: '100%', marginTop: 4, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)' }} />
                 </label>
+              </div>
+              <div className="seg">
+                <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>
+                <button onClick={() => changeZ('back')} style={{ flex: 1, fontSize: 12 }}>⤓ לאחור</button>
               </div>
               <button className="btn btn-ghost btn-sm" onClick={deleteSelected} style={{ color: 'var(--danger)' }}>מחק טבלה</button>
             </div>
@@ -404,6 +446,10 @@ export function App() {
               </div>
               <div style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--mono)' }} dir="ltr">
                 x{Math.round(selBlock.x)} y{Math.round(selBlock.y)} · {selBlock.direction} · {selBlock.dirty ? 'edited' : 'original'}
+              </div>
+              <div className="seg">
+                <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>
+                <button onClick={() => changeZ('back')} style={{ flex: 1, fontSize: 12 }}>⤓ לאחור</button>
               </div>
               <button className="btn btn-ghost btn-sm" onClick={deleteSelected} style={{ color: 'var(--danger)' }}>מחק טקסט</button>
             </div>
