@@ -1,6 +1,6 @@
 // Mode-aware page canvas. IR is the source of truth.
 //  - original/compare show the reference raster; editable/reconstructed render from IR.
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { PageIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
 import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction } from '../types/catalog';
 import { TextEditOverlay } from '../editor/TextEditOverlay';
@@ -20,6 +20,8 @@ interface Props {
   editingId?: string | null;
   /** `additive` (shift/⌘/ctrl-click) toggles the id in the multi-selection. */
   onSelect?: (id: string | null, additive?: boolean) => void;
+  /** rubber-band selection result (ids intersecting the dragged rectangle). */
+  onMarquee?: (ids: string[], additive: boolean) => void;
   onStartEdit?: (id: string) => void;
   onChangeText?: (id: string, text: string) => void;
   onResize?: (id: string, box: { x: number; y: number; width: number; height: number }) => void;
@@ -33,9 +35,10 @@ interface Props {
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se';
 
-export function PageView({ page, scale, mode, fontFamily, selectedId, selectedIds, editingId, onSelect, onStartEdit, onChangeText, onResize, onCommit, editingCell, onStartEditCell, onChangeCell, onCommitCell }: Props) {
+export function PageView({ page, scale, mode, fontFamily, selectedId, selectedIds, editingId, onSelect, onMarquee, onStartEdit, onChangeText, onResize, onCommit, editingCell, onStartEditCell, onChangeCell, onCommitCell }: Props) {
   const isSel = (id: string) => selectedIds ? selectedIds.has(id) : selectedId === id;
   const singleSel = !selectedIds || selectedIds.size <= 1;
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const w = page.width * scale;
   const h = page.height * scale;
   const showRaster = mode === 'original' || mode === 'compare';
@@ -44,19 +47,48 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
   const compare = mode === 'compare';
   const drag = useRef<null | { id: string; corner: Corner; sx: number; sy: number; x: number; y: number; w: number; h: number }>(null);
 
-  // free-drag move of any block (click selects; drag past threshold moves)
+  // free-drag move of any block (click selects; drag past threshold moves). If the block is part
+  // of a multi-selection, ALL selected blocks move together by the same delta.
   const startMove = (b: BlockIR, e: React.MouseEvent) => {
     e.stopPropagation();
-    onSelect?.(b.id, e.shiftKey || e.metaKey || e.ctrlKey);
-    const sx = e.clientX, sy = e.clientY, ox = b.x, oy = b.y;
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    const inGroup = !!selectedIds && selectedIds.has(b.id) && selectedIds.size > 1 && !additive;
+    if (!inGroup) onSelect?.(b.id, additive);
+    const movingIds = inGroup ? [...selectedIds!] : [b.id];
+    const origs = movingIds
+      .map((id) => page.blocks.find((x) => x.id === id))
+      .filter((x): x is BlockIR => !!x)
+      .map((bl) => ({ id: bl.id, x: bl.x, y: bl.y, w: bl.width, h: bl.height }));
+    const sx = e.clientX, sy = e.clientY;
     let moved = false;
     const move = (ev: MouseEvent) => {
       const dx = (ev.clientX - sx) / scale, dy = (ev.clientY - sy) / scale;
       if (!moved && Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
       moved = true;
-      onResize?.(b.id, { x: Math.round(ox + dx), y: Math.round(oy + dy), width: b.width, height: b.height });
+      for (const o of origs) onResize?.(o.id, { x: Math.round(o.x + dx), y: Math.round(o.y + dy), width: o.w, height: o.h });
     };
     const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+  };
+
+  // rubber-band (marquee) selection from an empty area of the page
+  const startMarquee = (e: React.MouseEvent) => {
+    if (!interactive || e.target !== e.currentTarget) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    if (!additive) onSelect?.(null);
+    setMarquee({ x0: sx, y0: sy, x1: sx, y1: sy });
+    const move = (ev: MouseEvent) => setMarquee({ x0: sx, y0: sy, x1: ev.clientX - rect.left, y1: ev.clientY - rect.top });
+    const up = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      const ex = ev.clientX - rect.left, ey = ev.clientY - rect.top;
+      setMarquee(null);
+      if (Math.abs(ex - sx) < 3 && Math.abs(ey - sy) < 3) return; // a click, not a drag
+      const x0 = Math.min(sx, ex) / scale, y0 = Math.min(sy, ey) / scale, x1 = Math.max(sx, ex) / scale, y1 = Math.max(sy, ey) / scale;
+      const ids = page.blocks.filter((bl) => !bl.deleted && !(bl.x > x1 || bl.x + bl.width < x0 || bl.y > y1 || bl.y + bl.height < y0)).map((bl) => bl.id);
+      onMarquee?.(ids, additive);
+    };
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
   };
 
@@ -80,7 +112,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
 
   return (
     <div
-      onMouseDown={() => interactive && onSelect?.(null)}
+      onMouseDown={startMarquee}
       style={{ position: 'relative', width: w, height: h, background: '#fff', boxShadow: '0 10px 28px rgba(28,48,90,.18)', borderRadius: 2, overflow: 'hidden', flexShrink: 0 }}
     >
       {showRaster && page.previewImage && (
@@ -219,6 +251,16 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
             }} />
         ));
       })()}
+
+      {/* rubber-band selection rectangle */}
+      {marquee && (
+        <div style={{
+          position: 'absolute', pointerEvents: 'none', zIndex: 60,
+          left: Math.min(marquee.x0, marquee.x1), top: Math.min(marquee.y0, marquee.y1),
+          width: Math.abs(marquee.x1 - marquee.x0), height: Math.abs(marquee.y1 - marquee.y0),
+          border: '1px solid var(--accent)', background: 'rgba(232,120,30,.12)',
+        }} />
+      )}
     </div>
   );
 }

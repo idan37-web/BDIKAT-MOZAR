@@ -83,19 +83,30 @@ export function App() {
     setSel(null); setMulti(new Set()); setEditing(null); setEditingCell(null);
   }, [multi, sel, cur]);
 
-  // Delete/Backspace removes the selection (unless typing in a field)
+  // nudge the selection by (dx,dy) points (arrow keys)
+  const nudge = React.useCallback((dx: number, dy: number) => {
+    const ids = multi.size ? multi : (sel ? new Set([sel]) : null);
+    if (!ids) return;
+    setDoc((d) => !d ? d : {
+      ...d,
+      pages: d.pages.map((p, i) => i !== cur ? p : { ...p, blocks: p.blocks.map((b) => ids.has(b.id) ? { ...b, x: Math.round(b.x + dx), y: Math.round(b.y + dy), dirty: true } : b) }),
+    });
+  }, [multi, sel, cur]);
+
+  // keyboard: Delete removes; arrows nudge (Shift = ×10). Ignored while typing in a field.
   React.useEffect(() => {
+    const ARROWS: Record<string, [number, number]> = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
       if (editing || editingCell || (!multi.size && !sel)) return;
-      e.preventDefault();
-      deleteSelected();
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); return; }
+      const a = ARROWS[e.key];
+      if (a) { e.preventDefault(); const s = e.shiftKey ? 10 : 1; nudge(a[0] * s, a[1] * s); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deleteSelected, editing, editingCell, multi, sel]);
+  }, [deleteSelected, nudge, editing, editingCell, multi, sel]);
 
   const openDoc = (d: DocumentIR, templateId?: string) => {
     templateIdRef.current = templateId;
@@ -212,6 +223,21 @@ export function App() {
       }),
     });
   };
+  // bulk-edit all selected TEXT blocks (colour / size / bold / align / direction)
+  const patchSelectedText = (patch: Partial<TextBlockIR> & Record<string, unknown>) => {
+    setDoc((d) => !d ? d : {
+      ...d,
+      pages: d.pages.map((p, i) => i !== cur ? p : { ...p, blocks: p.blocks.map((b) => multi.has(b.id) && b.type === 'text' ? { ...b, ...patch, dirty: true } : b) }),
+    });
+  };
+  const bumpSelectedSize = (delta: number) => {
+    setDoc((d) => !d ? d : {
+      ...d,
+      pages: d.pages.map((p, i) => i !== cur ? p : { ...p, blocks: p.blocks.map((b) => multi.has(b.id) && b.type === 'text' ? { ...b, fontSize: Math.max(5, Math.round(((b as TextBlockIR).fontSize + delta) * 10) / 10), dirty: true } : b) }),
+    });
+  };
+  const selTextCount = page.blocks.filter((b) => multi.has(b.id) && b.type === 'text' && !b.deleted).length;
+
   // one-click background removal on the selected image
   const removeBg = async () => {
     if (!selImage) return;
@@ -268,6 +294,11 @@ export function App() {
               if (editing && editing !== id) setEditing(null);
               setEditingCell(null);
             }}
+            onMarquee={(ids, additive) => {
+              setMulti((prev) => { const n = additive ? new Set(prev) : new Set<string>(); ids.forEach((id) => n.add(id)); return n; });
+              if (ids.length) setSel(ids[ids.length - 1]);
+              setEditing(null); setEditingCell(null);
+            }}
             onStartEdit={(id) => { setSel(id); setEditing(id); }}
             onChangeText={(id, text) => patchBlock(id, { text })}
             onResize={handleResize}
@@ -286,7 +317,29 @@ export function App() {
           ) : multi.size > 1 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ fontWeight: 800 }}>{multi.size} אלמנטים נבחרו</div>
-              <p style={{ fontSize: 12.5, color: 'var(--ink-2)', margin: 0 }}>Shift/⌘-קליק מוסיף/מסיר מהבחירה. אפשר למחוק את כולם יחד (או מקש Delete).</p>
+              <p style={{ fontSize: 12.5, color: 'var(--ink-2)', margin: 0 }}>גרירה=הזזה יחד · חיצים=הזזה עדינה (Shift ×10) · Shift-קליק מוסיף/מסיר.</p>
+              {selTextCount > 1 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>עריכת {selTextCount} תיבות טקסט יחד</div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button className="btn btn-ghost btn-sm" onClick={() => bumpSelectedSize(-1)}>א−</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => bumpSelectedSize(1)}>א+</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => patchSelectedText({ fontWeight: 700 })} style={{ fontWeight: 800 }}>B</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => patchSelectedText({ fontWeight: 400 })}>רגיל</button>
+                  </div>
+                  <div className="seg">
+                    {(['start', 'center', 'end'] as const).map((al) => (
+                      <button key={al} onClick={() => patchSelectedText({ align: al })} style={{ flex: 1, fontSize: 12 }}>{al === 'start' ? 'ימין' : al === 'center' ? 'מרכז' : 'שמאל'}</button>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                    {['#111418', '#ffffff', '#c0142d', '#1b4fa0', '#0a7d3b'].map((c) => (
+                      <button key={c} onClick={() => patchSelectedText({ color: c })} title={c} style={{ width: 22, height: 22, borderRadius: 6, background: c, cursor: 'pointer', border: '1px solid var(--line-2)' }} />
+                    ))}
+                    <input type="color" onChange={(e) => patchSelectedText({ color: e.target.value })} style={{ width: 26, height: 26, padding: 0, border: '1px solid var(--line-2)', borderRadius: 6, cursor: 'pointer', background: 'none' }} />
+                  </div>
+                </div>
+              )}
               <div className="seg">
                 <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>
                 <button onClick={() => changeZ('back')} style={{ flex: 1, fontSize: 12 }}>⤓ לאחור</button>
