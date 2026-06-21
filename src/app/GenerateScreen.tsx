@@ -8,8 +8,10 @@ import { listTemplates } from '../store/library';
 import { generateCatalog, validateCatalog, dynamicSlots, REQUIRED_KINDS, type BindingMap } from '../catalog/generateCatalog';
 import { autofitDocument, canvasMeasureFor, type Measure } from '../catalog/autofit';
 import { brandFont, ensureFontFace, FALLBACK_HEBREW } from './brandFont';
-import { parseSpreadsheet, toCSV } from '../data/parseSheet';
-import { cellsToSheet, sheetToCells, blankTemplateCells, type SheetIssue } from '../data/specSheetFormat';
+import { parseSpreadsheetSheets, toCSV } from '../data/parseSheet';
+import { sheetToCells, blankTemplateCells, type SheetIssue } from '../data/specSheetFormat';
+import { parseToSpecSheet, naturalTemplateSheets } from '../data/workbookAdapter';
+import { writeXlsx } from '../data/writeXlsx';
 import { sheetStats, emptySheet, type SpecSheet } from '../data/specModel';
 import { mapSheetToCatalog, type FieldMapping } from '../data/mapSheetToCatalog';
 import { peugeot3008Sheet } from '../data/samples';
@@ -32,12 +34,13 @@ function plainMeasure(family: string): Measure {
   };
 }
 
-function downloadCsv(name: string, cells: string[][]) {
-  const blob = new Blob([toCSV(cells)], { type: 'text/csv;charset=utf-8' });
+function downloadBlob(name: string, blob: Blob) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
+const downloadCsv = (name: string, cells: string[][]) => downloadBlob(name, new Blob([toCSV(cells)], { type: 'text/csv;charset=utf-8' }));
+const downloadXlsx = (name: string, bytes: Uint8Array) => downloadBlob(name, new Blob([bytes as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
 
 export function GenerateScreen({ initialSpec, onCreate, onBack }: {
   initialSpec?: TemplateSpec | null;
@@ -76,13 +79,14 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
     setDataErr(null); setDataName(file.name);
     try {
       const isText = /\.(csv|tsv|txt)$/i.test(file.name);
-      const cells = await parseSpreadsheet(file.name, isText ? await file.text() : await file.arrayBuffer());
-      const { sheet: s, issues: iss } = cellsToSheet(cells);
+      const sheets = await parseSpreadsheetSheets(file.name, isText ? await file.text() : await file.arrayBuffer());
+      const { sheet: s, issues: iss, format } = parseToSpecSheet(sheets);
       if (!s.sections.length && !s.features.length && !s.colors.length) {
-        setDataErr('לא זוהו נתונים מובנים בקובץ. ודא שהשורות מתויגות (spec/feature/color…) או הורד תבנית.');
+        setDataErr('לא זוהו נתונים בקובץ. תבנית טבעית: גיליון לכל קטגוריה, עמודה A=תווית, B+=ערכים. או הורד תבנית מתויגת.');
         setSheet(null); setIssues(iss); return;
       }
       setSheet(s); setIssues(iss);
+      setDataName(`${file.name} · ${format === 'natural' ? 'פורמט גיליונות' : 'פורמט מתויג'}`);
     } catch (e) {
       setDataErr(`קריאת הקובץ נכשלה: ${(e as Error).message}. נסה לשמור כ-CSV (UTF-8).`);
       setSheet(null);
@@ -179,7 +183,8 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
                 if (!sheet) { const s = emptySheet(['גרסה 1']); s.sections.push({ title: 'מנוע', rows: [{ label: '', values: [''] }] }); s.features.push({ title: 'בטיחות', items: [{ label: '', perTrim: [true] }] }); setSheet(s); setDataName('הזנה ידנית'); }
                 setEditData((v) => !v);
               }}>{editData ? 'סגור עריכה' : '✎ הזנה/עריכה ידנית'}</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => downloadCsv('autospec-template.csv', blankTemplateCells(spec!.pages.some((p) => p.role === 'spec') ? ['GT', 'ALLURE'] : ['בסיסי']))}>הורד תבנית</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => downloadXlsx('autospec-template.xlsx', writeXlsx(naturalTemplateSheets()))} title="תבנית רב-גיליונות בפורמט שלך">הורד תבנית (Excel)</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => downloadCsv('autospec-template.csv', blankTemplateCells())} title="פורמט מתויג חלופי">CSV</button>
               {sheet && <button className="btn btn-ghost btn-sm" onClick={() => downloadCsv(`${sheet.model || 'spec'}.csv`, sheetToCells(sheet))}>הורד כ-CSV</button>}
             </div>
             <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>

@@ -47,6 +47,19 @@ const META_KEYS: Record<string, 'brand' | 'model'> = {
   model: 'model', דגם: 'model', רכב: 'model',
 };
 
+/** True when the cells use the TAGGED AutoSpec format (col A is a record tag on enough rows),
+ * vs. the natural per-sheet workbook format (col A is a field label). */
+export function isTaggedFormat(cells: Cells): boolean {
+  let tagged = 0, nonEmpty = 0;
+  for (const row of cells) {
+    const a = (row[0] ?? '').trim();
+    if (!a || a.startsWith('#')) continue;
+    nonEmpty++;
+    if (tagOf(a)) tagged++;
+  }
+  return nonEmpty > 0 && tagged >= 3 && tagged / nonEmpty >= 0.5;
+}
+
 /** Split a label like "נפח מנוע (סמ״ק)" into { label, unit }. */
 export function splitUnit(label: string): { label: string; unit?: string } {
   const m = /^(.*?)[\s]*[\(（]\s*([^()）]+?)\s*[\)）]\s*$/.exec(label.trim());

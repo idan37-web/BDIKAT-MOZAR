@@ -195,6 +195,30 @@ export async function parseXlsx(bytes: Uint8Array): Promise<Cells> {
   return out;
 }
 
+/** One worksheet of a workbook (tab name + cells). */
+export interface NamedSheet { name: string; cells: Cells; }
+
+/** Read every worksheet of an .xlsx WITH its tab name (a sheet = a category in the natural format). */
+export async function parseXlsxSheets(bytes: Uint8Array): Promise<NamedSheet[]> {
+  const files = await readZip(bytes);
+  const shared = parseSharedStrings(decodeText(files.get('xl/sharedStrings.xml')));
+  const wb = decodeText(files.get('xl/workbook.xml'));
+  const names = [...wb.matchAll(/<sheet\b[^>]*name="([^"]*)"/g)].map((m) => xmlUnescape(m[1]));
+  const sheetNames = [...files.keys()].filter((k) => /^xl\/worksheets\/sheet\d+\.xml$/.test(k))
+    .sort((a, b) => (parseInt(a.match(/(\d+)/)?.[1] || '0') - parseInt(b.match(/(\d+)/)?.[1] || '0')));
+  if (!sheetNames.length) throw new Error('no worksheet found in .xlsx');
+  return sheetNames.map((sn, i) => ({ name: names[i] || `Sheet${i + 1}`, cells: parseSheetXml(decodeText(files.get(sn)), shared) }));
+}
+
+/** Per-sheet read for any source (xlsx → tabs; csv/tsv → one unnamed sheet). */
+export async function parseSpreadsheetSheets(name: string, data: ArrayBuffer | Uint8Array | string): Promise<NamedSheet[]> {
+  if (typeof data === 'string') return [{ name: '', cells: parseDelimited(data) }];
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
+  if (/\.xlsx$/i.test(name) || isZip) return parseXlsxSheets(bytes);
+  return [{ name: '', cells: parseDelimited(new TextDecoder('utf-8').decode(bytes)) }];
+}
+
 /** Dispatch by file name/bytes: .xlsx (PK zip) vs delimited text. */
 export async function parseSpreadsheet(name: string, data: ArrayBuffer | Uint8Array | string): Promise<Cells> {
   if (typeof data === 'string') return parseDelimited(data);

@@ -65,6 +65,17 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   SAME editor and exports via the SAME vector pipeline. UI: "יצירת קטלוג" screen. `npm run verify:gen` gates it
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
 
+## Feedback round 4 (real templates)
+- **Natural multi-sheet workbook adapter** (`src/data/workbookAdapter.ts`) for the user's REAL Excel format:
+  one TAB per category (יחידת הנעה / מידות ומשקלים / סוללה וטעינה → spec sections; בטיחות / אבזור → equipment
+  feature lists with V/X per trim), col A = field label, cols B+ = value per trim, header row carries trim
+  names or V/X. `parseToSpecSheet` auto-detects tagged vs natural (`isTaggedFormat`); `parseXlsxSheets`
+  reads tabs WITH names. Verified on all four real drive-type files (3 spec sections + 2 feature cats each).
+  V/X parsed correctly (V=included, X=NOT — `parseBool` treats X as true, so a dedicated `vxBool` is used).
+- **`writeXlsx`** (STORE zip, browser-safe, CRC32): "הורד תבנית (Excel)" now hands back a 5-tab template in the
+  user's own format (field labels pre-filled). Round-trips through the reader (gate).
+- Gate `verify:structured` covers natural detection, V/X, and the template writer round-trip.
+
 ## Feedback round 3 (notes doc + fonts)
 - **Citroën fonts embedded** (see Brand fonts). Editor + vector export now use CitroenTypeHebrew for Citroën.
 - **Technical-spec vs equipment separation** (`classifyPage`): both are dense small-font pages, so density

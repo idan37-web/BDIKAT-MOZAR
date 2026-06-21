@@ -128,6 +128,34 @@ const tmpl = cellsToSheet(blankTemplateCells(['GT', 'ALLURE'])).sheet;
 expect('template has spec + features', tmpl.sections.length >= 2 && tmpl.features.length >= 1);
 expect('template separates exterior/interior colours', tmpl.colors.some((c) => c.group === 'interior') && tmpl.colors.some((c) => c.group !== 'interior'));
 
+// 3d) NATURAL multi-sheet workbook (the user's real format: one tab per category, col A = label,
+// cols B+ = value per trim; safety/equipment tabs use V/X). Auto-detected vs the tagged format.
+{
+  const { parseToSpecSheet } = await import('../src/data/workbookAdapter');
+  const wb = [
+    { name: 'יחידת הנעה', cells: [['', 'GT', 'ALLURE'], ['נפח מנוע (סמ״ק)', '1199', '1199'], ['מספר בוכנות', '3', '3']] },
+    { name: 'מידות ומשקלים', cells: [['', 'GT', 'ALLURE'], ['אורך כללי (ס״מ)', '453.5', '453.5']] },
+    { name: 'בטיחות', cells: [['', 'V/X', 'V/X'], ['6 כריות אוויר', 'V', 'V'], ['ESP', 'V', 'X']] },
+    { name: 'אבזור', cells: [['', 'V/X', 'V/X'], ['מסך מולטימדיה', 'X', 'V']] },
+  ];
+  const r = parseToSpecSheet(wb);
+  expect('natural workbook auto-detected', r.format === 'natural');
+  expect('natural: tabs → spec sections', r.sheet.sections.some((s) => s.title === 'יחידת הנעה' && s.rows.some((row) => row.label === 'נפח מנוע' && row.unit === 'סמ״ק' && row.values[0] === '1199')));
+  expect('natural: safety/equipment tabs → feature lists with V/X', r.sheet.features.some((c) => c.title === 'בטיחות' && c.items.some((it) => it.label === 'ESP' && it.perTrim[0] === true && it.perTrim[1] === false)));
+  expect('natural: trim names read from header', r.sheet.trims.join('|') === 'GT|ALLURE');
+
+  // the downloadable natural template (writeXlsx) round-trips back through the reader
+  const { naturalTemplateSheets } = await import('../src/data/workbookAdapter');
+  const { writeXlsx } = await import('../src/data/writeXlsx');
+  const { parseXlsxSheets } = await import('../src/data/parseSheet');
+  const tplXlsx = writeXlsx(naturalTemplateSheets(['GT', 'ALLURE']));
+  expect('writeXlsx produces a PK zip', tplXlsx[0] === 0x50 && tplXlsx[1] === 0x4b);
+  const tplSheets = await parseXlsxSheets(tplXlsx);
+  expect('template xlsx keeps the 5 category tabs', tplSheets.length === 5 && tplSheets[0].name === 'יחידת הנעה');
+  const tplBack = parseToSpecSheet(tplSheets);
+  expect('template xlsx → natural with spec + features', tplBack.format === 'natural' && tplBack.sheet.sections.length === 3 && tplBack.sheet.features.length === 2);
+}
+
 // 4) issue surfacing: a malformed row is reported (not silently dropped)
 const dirty = parseDelimited('spec,מנוע\nbogusTag,x,y\ncolor,כחול,metallic,#0000ff');
 const dres = cellsToSheet(dirty);
