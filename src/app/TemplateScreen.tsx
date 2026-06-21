@@ -10,6 +10,8 @@ import { detectFormat, type SlotKind, type SlotSpec, type TemplateSpec } from '.
 import { downloadTemplate } from '../templates/storage';
 import { saveTemplate } from '../store/library';
 import { blockScreenRect } from '../editor/coords';
+import { classifyWithGemini, applyAiToSpec } from '../ai/geminiClassify';
+import { getGeminiKey, setGeminiKey } from '../ai/settings';
 
 const SLOT_KINDS: SlotKind[] = [
   'model-name', 'heading', 'marketing-text', 'hero-image', 'image',
@@ -34,6 +36,27 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
   const [selSlots, setSelSlots] = React.useState<Set<string>>(() => new Set());
   const [saved, setSaved] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  // optional AI-assist (Gemini)
+  const [aiKey, setAiKey] = React.useState('');
+  const [aiOpen, setAiOpen] = React.useState(false);
+  const [aiBusy, setAiBusy] = React.useState(false);
+  const [aiMsg, setAiMsg] = React.useState<string | null>(null);
+  React.useEffect(() => { setAiKey(getGeminiKey()); }, []);
+
+  async function refineWithAi() {
+    if (!tpl) return;
+    const key = aiKey.trim();
+    if (!key) { setAiMsg('הזן מפתח Gemini API (חינמי) כדי להפעיל.'); setAiOpen(true); return; }
+    setGeminiKey(key); setAiBusy(true); setAiMsg('שולח לסיווג AI…');
+    try {
+      const ai = await classifyWithGemini(tpl, key);
+      const { spec, stats } = applyAiToSpec(tpl, ai);
+      setTpl(spec); setSaved(false); setSelSlot(null); setSelSlots(new Set());
+      setAiMsg(`✓ AI עדכן ${stats.pagesChanged} עמודים ו-${stats.slotsChanged} סלוטים. בדוק ותקן לפי הצורך.`);
+    } catch (e) {
+      setAiMsg(`שגיאת AI: ${(e as Error).message}. ההיוריסטיקה נשמרה.`);
+    } finally { setAiBusy(false); }
+  }
 
   async function handleFiles(files: File[]) {
     const pdfs = files.filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
@@ -161,6 +184,8 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
           {tpl.brand} · {tpl.format} · {sum.pages} עמ׳ · {sum.dynamic} דינמי / {sum.fixed} קבוע · נלמד מ-{tpl.learnedFrom.length} קבצים
         </span>
         <div style={{ flex: 1 }} />
+        <button className="btn btn-ghost btn-sm" onClick={refineWithAi} disabled={aiBusy} title="סיווג עמודים/סלוטים בעזרת Gemini (אופציונלי)">{aiBusy ? 'AI…' : '✨ שפר עם AI'}</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => setAiOpen((v) => !v)} title="הגדרות AI">⚙</button>
         <button className="btn btn-ghost btn-sm" onClick={() => downloadTemplate(tpl)}>הורד JSON</button>
         <button className="btn btn-sm" onClick={doSave} style={{ background: saved ? 'var(--ok, #0a7d3b)' : 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>
           {saved ? '✓ נשמר' : 'שמור תבנית'}
@@ -168,6 +193,21 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
         {onGenerate && <button className="btn btn-sm" onClick={async () => { await saveTemplate(tpl, docs[0]?.pages[0]?.previewImage); onGenerate(tpl); }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>צור קטלוג ←</button>}
         <button className="btn btn-ghost btn-sm" onClick={onBack}>יציאה</button>
       </header>
+
+      {(aiOpen || aiMsg) && (
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 18px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)', flexWrap: 'wrap' }}>
+          {aiOpen && (
+            <>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>Gemini API key:</span>
+              <input type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} placeholder="מפתח חינמי מ-aistudio.google.com" dir="ltr"
+                style={{ flex: 1, minWidth: 220, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)', fontFamily: 'var(--mono)' }} />
+              <button className="btn btn-sm" onClick={() => { setGeminiKey(aiKey); setAiMsg('✓ המפתח נשמר במכשיר זה.'); }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>שמור מפתח</button>
+              <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>נשמר מקומית בדפדפן; נשלח רק ל-Google בעת "שפר עם AI".</span>
+            </>
+          )}
+          {aiMsg && <span style={{ fontSize: 12.5, color: aiMsg.startsWith('שגיאת') ? 'var(--danger)' : 'var(--ink-2)' }}>{aiMsg}</span>}
+        </div>
+      )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* page rail */}
