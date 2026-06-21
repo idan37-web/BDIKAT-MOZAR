@@ -243,13 +243,21 @@ export function classifyPage(
     return { role: 'back', evidence: ev };
   }
 
-  // technical spec table: a dense small-font grid, OR (for decks/larger layouts) engine terms
-  // backed by lots of numbers + units — so a 16:9 spec page isn't mistaken for a feature page.
+  // technical spec table vs equipment list: BOTH are dense small-font pages, so density alone is
+  // not enough — the technical spec is NUMERIC, the equipment list is SENTENCES. Require numbers.
   const digitCount = (allText.match(/\d/g) || []).length;
   const unitCount = (allText.match(KW.units) || []).length;
-  if ((n >= 40 && smallRatio >= 0.55) || (hit('engine') && digitCount >= 20 && unitCount >= 1)) {
-    ev.push(`spec: ${n} runs, ${(smallRatio * 100) | 0}% small-font, ${digitCount} digits`, hit('engine') ? 'engine terms' : 'tabular');
+  const digitRatio = digitCount / Math.max(1, allText.length); // technical spec ≈ 0.04-0.09, equipment ≈ 0.01
+  const dense = n >= 40 && smallRatio >= 0.55;
+  const numericSpec = dense && (unitCount >= 2 || (digitRatio >= 0.03 && digitCount >= 40));
+  if (numericSpec || (hit('engine') && digitRatio >= 0.025 && unitCount >= 1)) {
+    ev.push(`spec (numeric): ${digitCount} digits, ratio ${digitRatio.toFixed(3)}, ${unitCount} units`);
     return { role: 'spec', evidence: ev };
+  }
+  // a dense page that is mostly TEXT (few numbers) = equipment / safety feature lists, NOT the spec
+  if (dense && (hit('safety') || hit('equipment') || hit('colors'))) {
+    ev.push(`dense textual list: ${n} runs, only ${digitCount} digits → equipment/safety`);
+    return { role: 'safety', evidence: ev };
   }
 
   if (legalHeavy && index >= total - 2) {

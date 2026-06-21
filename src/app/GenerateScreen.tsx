@@ -10,10 +10,11 @@ import { autofitDocument, canvasMeasureFor, type Measure } from '../catalog/auto
 import { brandFont, ensureFontFace, FALLBACK_HEBREW } from './brandFont';
 import { parseSpreadsheet, toCSV } from '../data/parseSheet';
 import { cellsToSheet, sheetToCells, blankTemplateCells, type SheetIssue } from '../data/specSheetFormat';
-import { sheetStats, type SpecSheet } from '../data/specModel';
+import { sheetStats, emptySheet, type SpecSheet } from '../data/specModel';
 import { mapSheetToCatalog, type FieldMapping } from '../data/mapSheetToCatalog';
 import { peugeot3008Sheet } from '../data/samples';
 import { ensureThumbnails } from './thumbnail';
+import { SpecSheetEditor } from './SpecSheetEditor';
 
 const ROLE_HE: Record<string, string> = {
   cover: 'שער', feature: 'עמוד שיווקי', interior: 'עיצוב פנים', colors: 'צבעים',
@@ -59,6 +60,7 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
   const [issues, setIssues] = React.useState<SheetIssue[]>([]);
   const [dataErr, setDataErr] = React.useState<string | null>(null);
   const [dataName, setDataName] = React.useState<string>('');
+  const [editData, setEditData] = React.useState(false);
 
   // reset bindings + data when the template changes
   React.useEffect(() => { setBindings({}); setShowMissing(false); setSheet(null); setIssues([]); setDataErr(null); setDataName(''); }, [spec?.id]);
@@ -173,6 +175,10 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
                 <input type="file" accept=".csv,.tsv,.txt,.xlsx" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) loadDataFile(f); e.currentTarget.value = ''; }} />
               </label>
               <button className="btn btn-ghost btn-sm" onClick={() => { setSheet(peugeot3008Sheet()); setIssues([]); setDataErr(null); setDataName('פיג׳ו 3008 (דוגמה)'); }}>טען דוגמה אמיתית</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => {
+                if (!sheet) { const s = emptySheet(['גרסה 1']); s.sections.push({ title: 'מנוע', rows: [{ label: '', values: [''] }] }); s.features.push({ title: 'בטיחות', items: [{ label: '', perTrim: [true] }] }); setSheet(s); setDataName('הזנה ידנית'); }
+                setEditData((v) => !v);
+              }}>{editData ? 'סגור עריכה' : '✎ הזנה/עריכה ידנית'}</button>
               <button className="btn btn-ghost btn-sm" onClick={() => downloadCsv('autospec-template.csv', blankTemplateCells(spec!.pages.some((p) => p.role === 'spec') ? ['GT', 'ALLURE'] : ['בסיסי']))}>הורד תבנית</button>
               {sheet && <button className="btn btn-ghost btn-sm" onClick={() => downloadCsv(`${sheet.model || 'spec'}.csv`, sheetToCells(sheet))}>הורד כ-CSV</button>}
             </div>
@@ -231,6 +237,13 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
               })()}
             </div>
           </div>
+          {editData && sheet && (
+            <div style={{ border: '1px solid var(--accent)', borderRadius: 12, background: 'var(--surface)', padding: 14 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 10 }}>הזנת נתונים ידנית — שורות ברורות לפי אזור</div>
+              <SpecSheetEditor sheet={sheet} onChange={setSheet} />
+            </div>
+          )}
+
           {[...byPage.entries()].map(([pageIndex, items]) => {
             const role = items[0]?.role;
             return (

@@ -3,6 +3,8 @@
 // Imported text must never use fontFamily:inherit; it gets the brand font.
 import peugeotRegular from '../assets/PeugeotNewHebrew-Regular.otf?url';
 import peugeotBold from '../assets/PeugeotNewHebrew-Bold.otf?url';
+import citroenRegular from '../assets/CitroenTypeHebrew-Regular.ttf?url';
+import citroenBold from '../assets/CitroenTypeHebrew-Bold.ttf?url';
 
 export interface BrandFont {
   brand: string;
@@ -12,6 +14,7 @@ export interface BrandFont {
 }
 
 const PEUGEOT: BrandFont = { brand: 'peugeot', family: 'PeugeotNewHebrew', regularUrl: peugeotRegular, boldUrl: peugeotBold };
+const CITROEN: BrandFont = { brand: 'citroen', family: 'CitroenTypeHebrew', regularUrl: citroenRegular, boldUrl: citroenBold };
 
 /** Detect the brand from the source filename (extend per brand as fonts arrive). */
 export function detectBrand(name?: string): string {
@@ -22,8 +25,9 @@ export function detectBrand(name?: string): string {
 }
 
 export function brandFont(brand: string): BrandFont | null {
-  // Only Peugeot's font has been supplied. Others fall back to a Hebrew system stack.
-  return brand === 'peugeot' ? PEUGEOT : null;
+  if (brand === 'peugeot') return PEUGEOT;
+  if (brand === 'citroen') return CITROEN;
+  return null; // other brands fall back to a Hebrew system stack until a font is supplied
 }
 
 const injected = new Set<string>();

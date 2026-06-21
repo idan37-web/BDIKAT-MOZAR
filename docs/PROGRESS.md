@@ -65,6 +65,19 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   SAME editor and exports via the SAME vector pipeline. UI: "יצירת קטלוג" screen. `npm run verify:gen` gates it
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
 
+## Feedback round 3 (notes doc + fonts)
+- **Citroën fonts embedded** (see Brand fonts). Editor + vector export now use CitroenTypeHebrew for Citroën.
+- **Technical-spec vs equipment separation** (`classifyPage`): both are dense small-font pages, so density
+  alone mislabelled equipment pages as spec. Now spec requires a NUMERIC signal (digit RATIO ≥ ~0.03 or
+  ≥2 unit tokens); a dense page that is mostly SENTENCES → `safety` (equipment), not `spec`. Verified on
+  3008/C5/RIFTER (equipment pages → safety, technical pages → spec). Holds for learning and generation
+  (spec role → table, safety role → feature layout).
+- **Row-based manual data editor** (`SpecSheetEditor`, in GenerateScreen via "✎ הזנה/עריכה ידנית"): clear
+  rows that mimic the table, a HEADING per spec area (מנוע/מידות/היגוי…), unit + value-per-trim columns,
+  add/remove rows + areas; equipment as sentence lists with a ✓ per trim; exterior/interior colours; wheels;
+  texts. Trims add/remove updates every row. Far clearer than cube-by-cube cell editing.
+- TODO: incorporate the user's fuller real template once uploaded (template still leans technical).
+
 ## Feedback round 2 (notes doc)
 - **Multi-sheet .xlsx** (`parseSheet.parseXlsx`): reads EVERY worksheet (rows concatenated), so an
   "equipment" sheet next to a "spec" sheet is no longer ignored. Comprehensive **downloadable template**
@@ -167,9 +180,10 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
 - Inputs: `project/uploads/{PEUGEOT,CITROEN}/PRIVATE/*.pdf`, `src/assets/PeugeotNewHebrew-*.otf`.
 
 ## Brand fonts
-Peugeot OTF is embedded (`src/assets`, applied in editor + available for export). **Citroën font was never
-supplied** → Citroën falls back to a Hebrew system stack (Assistant/Heebo). If the user uploads CitroenType,
-add it in `src/app/brandFont.ts` (and embed in export).
+Peugeot OTF + **Citroën TTF (CitroenTypeHebrew Regular/Bold, +Light/Medium/ExtraLight)** are embedded
+(`src/assets`, wired in `src/app/brandFont.ts`): applied in the editor and embedded on export per brand.
+Pixel-confirmed: C5 Aircross exports in CitroenTypeHebrew-Bold. Other brands still fall back to a Hebrew
+system stack until their font is supplied.
 
 ## Stage 6 (C.8) — template learning — AS BUILT
 - **`src/templates/templateSpec.ts`** — `TemplateSpec` (brand/family/format · `tokens` · `pages[]`) where each
