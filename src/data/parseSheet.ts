@@ -178,17 +178,21 @@ function parseSheetXml(xml: string, shared: string[]): Cells {
   return rows;
 }
 
-/** Read the first worksheet of an .xlsx into Cells. Throws with a clear message on failure. */
+/** Read EVERY worksheet of an .xlsx into Cells (rows concatenated across sheets, so a tagged
+ * row is found no matter which sheet it lives in — e.g. an "equipment" sheet alongside "spec"). */
 export async function parseXlsx(bytes: Uint8Array): Promise<Cells> {
   const files = await readZip(bytes);
   const shared = parseSharedStrings(decodeText(files.get('xl/sharedStrings.xml')));
-  // pick the first worksheet (sheet1.xml is the common default)
-  let sheetName = 'xl/worksheets/sheet1.xml';
-  if (!files.has(sheetName)) {
-    sheetName = [...files.keys()].find((k) => /^xl\/worksheets\/sheet\d+\.xml$/.test(k)) || '';
+  const sheetNames = [...files.keys()].filter((k) => /^xl\/worksheets\/sheet\d+\.xml$/.test(k))
+    .sort((a, b) => (parseInt(a.match(/(\d+)/)?.[1] || '0') - parseInt(b.match(/(\d+)/)?.[1] || '0')));
+  if (!sheetNames.length) throw new Error('no worksheet found in .xlsx');
+  const out: Cells = [];
+  for (const name of sheetNames) {
+    const rows = parseSheetXml(decodeText(files.get(name)), shared);
+    if (out.length && rows.length) out.push([]); // blank separator row between sheets
+    for (const r of rows) out.push(r);
   }
-  if (!sheetName || !files.has(sheetName)) throw new Error('no worksheet found in .xlsx');
-  return parseSheetXml(decodeText(files.get(sheetName)), shared);
+  return out;
 }
 
 /** Dispatch by file name/bytes: .xlsx (PK zip) vs delimited text. */

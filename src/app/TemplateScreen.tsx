@@ -5,7 +5,7 @@
 import React from 'react';
 import type { DocumentIR } from '../types/catalog';
 import { importPdf } from '../pdf/importPdf';
-import { learnTemplate, summarizeTemplate } from '../templates/templateLearning';
+import { learnTemplate, summarizeTemplate, SLOT_LABEL } from '../templates/templateLearning';
 import { detectFormat, type SlotKind, type SlotSpec, type TemplateSpec } from '../templates/templateSpec';
 import { downloadTemplate } from '../templates/storage';
 import { saveTemplate } from '../store/library';
@@ -13,7 +13,7 @@ import { blockScreenRect } from '../editor/coords';
 
 const SLOT_KINDS: SlotKind[] = [
   'model-name', 'heading', 'marketing-text', 'hero-image', 'image',
-  'spec-table', 'colors', 'wheels', 'safety', 'pollution', 'price', 'legal', 'logo', 'background', 'text',
+  'spec-table', 'safety', 'equipment', 'colors', 'colors-interior', 'wheels', 'pollution', 'price', 'legal', 'logo', 'background', 'text',
 ];
 const ROLE_HE: Record<string, string> = {
   cover: 'שער', feature: 'עמוד שיווקי', interior: 'עיצוב פנים', colors: 'צבעים',
@@ -222,7 +222,7 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
               <div style={{ fontWeight: 800 }}>{selSlots.size} סלוטים נבחרו</div>
               <p style={{ fontSize: 12, color: 'var(--ink-2)', margin: 0 }}>Shift/⌘-קליק מוסיף/מסיר. פעולה תחול על כולם.</p>
               <label style={{ fontSize: 12, fontWeight: 700 }}>שנה סוג לכולם
-                <select defaultValue="" onChange={(e) => { if (e.target.value) patchSlots(selSlots, { kind: e.target.value as SlotKind }); }}
+                <select defaultValue="" onChange={(e) => { const k = e.target.value as SlotKind; if (k) patchSlots(selSlots, { kind: k, label: SLOT_LABEL[k] }); }}
                   style={{ width: '100%', marginTop: 4, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)' }}>
                   <option value="">— בחר סוג —</option>
                   {SLOT_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
@@ -249,9 +249,9 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
                 </div>
               </div>
               <label style={{ fontSize: 12, fontWeight: 700 }}>סוג הסלוט
-                <select value={sel.kind} onChange={(e) => patchSlot(sel.id, { kind: e.target.value as SlotKind })}
+                <select value={sel.kind} onChange={(e) => { const k = e.target.value as SlotKind; patchSlot(sel.id, { kind: k, label: SLOT_LABEL[k] }); }}
                   style={{ width: '100%', marginTop: 4, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)' }}>
-                  {SLOT_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+                  {SLOT_KINDS.map((k) => <option key={k} value={k}>{k} · {SLOT_LABEL[k]}</option>)}
                 </select>
               </label>
               <label style={{ fontSize: 12, fontWeight: 700 }}>תווית

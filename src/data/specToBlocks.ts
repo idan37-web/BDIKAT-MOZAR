@@ -264,21 +264,28 @@ export function layoutColors(sheet: SpecSheet, region: BBox, st: LayoutStyle): T
   let overflow = 0;
   const z0 = 130;
   const sw = size * 1.1; // swatch square
-  for (const c of sheet.colors) {
-    if (y + rh > region.y + region.height + 0.6) { overflow++; continue; }
-    // swatch on the right edge, name to its left (RTL)
-    const swX = region.x + region.width - sw;
-    if (c.code) {
-      blocks.push({
-        id: uid('sw'), type: 'shape', x: swX, y: y + (rh - sw) / 2, width: sw, height: sw,
-        rotation: 0, zIndex: z0 + 2, source: 'generated', originalBBox: { x: swX, y, width: sw, height: sw },
-        fill: c.code, stroke: { color: '#999999', width: 0.5 },
-      } as ShapeBlockIR);
-    }
-    const typeLabel = c.type === 'metallic' ? 'מטאלי' : c.type === 'pearl' ? 'פנינה' : 'רגיל';
-    blocks.push(textCell(`${c.name} · ${typeLabel}`, { x: region.x, y, width: region.width - sw - 6, height: rh }, st, z0 + 1, { align: 'end' }));
+  const drawColorGroup = (title: string, list: SpecSheet['colors']) => {
+    if (!list.length) return;
+    blocks.push(textCell(title, { x: region.x, y, width: region.width, height: rh }, st, z0 + 1, { bold: true, color: st.headingColor || st.color }));
     y += rh;
-  }
+    for (const c of list) {
+      if (y + rh > region.y + region.height + 0.6) { overflow++; continue; }
+      const swX = region.x + region.width - sw; // swatch on the right edge, name to its left (RTL)
+      if (c.code) {
+        blocks.push({
+          id: uid('sw'), type: 'shape', x: swX, y: y + (rh - sw) / 2, width: sw, height: sw,
+          rotation: 0, zIndex: z0 + 2, source: 'generated', originalBBox: { x: swX, y, width: sw, height: sw },
+          fill: c.code, stroke: { color: '#999999', width: 0.5 },
+        } as ShapeBlockIR);
+      }
+      const typeLabel = c.type === 'metallic' ? 'מטאלי' : c.type === 'pearl' ? 'פנינה' : 'רגיל';
+      blocks.push(textCell(`${c.name} · ${typeLabel}`, { x: region.x, y, width: region.width - sw - 6, height: rh }, st, z0 + 1, { align: 'end' }));
+      y += rh;
+    }
+  };
+  drawColorGroup('צבעי חוץ', sheet.colors.filter((c) => c.group !== 'interior'));
+  const interior = sheet.colors.filter((c) => c.group === 'interior');
+  if (interior.length) { y += rh * 0.2; drawColorGroup('צבעי פנים', interior); }
   if (sheet.wheels.length) {
     y += rh * 0.3;
     blocks.push(textCell('חישוקים', { x: region.x, y, width: region.width, height: rh }, st, z0 + 1,

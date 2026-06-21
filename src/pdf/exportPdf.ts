@@ -180,6 +180,7 @@ function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: Em
   const heading = hexToRgb(tb.headingColor || tb.color);
   const grid = hexToRgb(tb.gridColor || '#d7dade');
   const pad = 3;
+  if (tb.cellBg) page.drawRectangle({ x: tb.x, y: pageH - tb.y - tb.height, width: tb.width, height: tb.height, color: hexToRgb(tb.cellBg) });
   const cellText = (text: string, cellX: number, cellW: number, rowTop: number, align: 'end' | 'center', size: number, col: RGB, bold?: boolean) => {
     if (!text) return;
     const f = bold ? fontBold : font;

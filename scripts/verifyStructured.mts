@@ -11,7 +11,7 @@ import { isTableBlock, isTextBlock } from '../src/types/catalog';
 import type { DocumentIR } from '../src/types/catalog';
 import { peugeot3008Sheet } from '../src/data/samples';
 import { sheetStats } from '../src/data/specModel';
-import { sheetToCells, cellsToSheet } from '../src/data/specSheetFormat';
+import { sheetToCells, cellsToSheet, blankTemplateCells } from '../src/data/specSheetFormat';
 import { toCSV, parseDelimited, parseSpreadsheet, type Cells } from '../src/data/parseSheet';
 import { mapSheetToCatalog } from '../src/data/mapSheetToCatalog';
 
@@ -44,24 +44,28 @@ function makeZip(files: { name: string; data: Uint8Array }[]): Uint8Array {
   return cat([...locals, cd, eocd]);
 }
 function xmlEsc(s: string) { return s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]!)); }
-function cellsToXlsx(cells: Cells): Uint8Array {
+function cellsToXlsx(...sheets: Cells[]): Uint8Array {
   const enc = new TextEncoder();
   const uniq: string[] = []; const idx = new Map<string, number>();
   const sid = (s: string) => { if (!idx.has(s)) { idx.set(s, uniq.length); uniq.push(s); } return idx.get(s)!; };
   const col = (i: number) => { let s = ''; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
-  let rowsXml = '';
-  cells.forEach((row, r) => {
-    let cs = '';
-    row.forEach((v, c) => { if (v == null || v === '') return; cs += `<c r="${col(c)}${r + 1}" t="s"><v>${sid(v)}</v></c>`; });
-    rowsXml += `<row r="${r + 1}">${cs}</row>`;
-  });
-  const sheet = `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rowsXml}</sheetData></worksheet>`;
+  const sheetXml = (cells: Cells) => {
+    let rowsXml = '';
+    cells.forEach((row, r) => {
+      let cs = '';
+      row.forEach((v, c) => { if (v == null || v === '') return; cs += `<c r="${col(c)}${r + 1}" t="s"><v>${sid(v)}</v></c>`; });
+      rowsXml += `<row r="${r + 1}">${cs}</row>`;
+    });
+    return `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rowsXml}</sheetData></worksheet>`;
+  };
+  const sheetXmls = sheets.map(sheetXml);
   const sst = `<?xml version="1.0" encoding="UTF-8"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${uniq.length}" uniqueCount="${uniq.length}">${uniq.map((s) => `<si><t xml:space="preserve">${xmlEsc(s)}</t></si>`).join('')}</sst>`;
-  const ct = `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`;
+  const overrides = sheetXmls.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('');
+  const ct = `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${overrides}</Types>`;
   return makeZip([
     { name: '[Content_Types].xml', data: enc.encode(ct) },
     { name: 'xl/sharedStrings.xml', data: enc.encode(sst) },
-    { name: 'xl/worksheets/sheet1.xml', data: enc.encode(sheet) },
+    ...sheetXmls.map((x, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(x) })),
   ]);
 }
 
@@ -110,6 +114,19 @@ const xBack = cellsToSheet(xCells);
 expect('XLSX round-trip preserves rows', sheetStats(xBack.sheet).rows === stats.rows);
 expect('XLSX round-trip preserves values', sheetStats(xBack.sheet).values === stats.values);
 expect('XLSX round-trip preserves colors', sheetStats(xBack.sheet).colors === stats.colors);
+
+// 3b) MULTI-SHEET .xlsx: spec rows in sheet 1, equipment rows in a SEPARATE sheet → all read
+const specSheetCells: Cells = [['trims', 'GT', 'ALLURE'], ['spec', 'מנוע', 'נפח מנוע', 'סמ״ק', '1199', '1199']];
+const equipSheetCells: Cells = [['feature', 'אבזור', 'מסך מולטימדיה', '0', '1'], ['feature', 'בטיחות', '6 כריות אוויר', '1', '1']];
+const multi = cellsToXlsx(specSheetCells, equipSheetCells);
+const mBack = cellsToSheet(await parseSpreadsheet('multi.xlsx', multi));
+expect('multi-sheet xlsx: spec read from sheet 1', sheetStats(mBack.sheet).rows === 1);
+expect('multi-sheet xlsx: equipment read from sheet 2 (not ignored)', sheetStats(mBack.sheet).features === 2);
+
+// 3c) the downloadable template parses into every section, incl. interior colours
+const tmpl = cellsToSheet(blankTemplateCells(['GT', 'ALLURE'])).sheet;
+expect('template has spec + features', tmpl.sections.length >= 2 && tmpl.features.length >= 1);
+expect('template separates exterior/interior colours', tmpl.colors.some((c) => c.group === 'interior') && tmpl.colors.some((c) => c.group !== 'interior'));
 
 // 4) issue surfacing: a malformed row is reported (not silently dropped)
 const dirty = parseDelimited('spec,מנוע\nbogusTag,x,y\ncolor,כחול,metallic,#0000ff');

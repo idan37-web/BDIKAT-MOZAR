@@ -22,14 +22,15 @@ import type { Cells } from './parseSheet';
 export interface SheetIssue { row: number; message: string; cells: string[]; }
 export interface SheetParseResult { sheet: SpecSheet; issues: SheetIssue[]; }
 
-type Tag = 'meta' | 'trims' | 'spec' | 'feature' | 'color' | 'wheel' | 'marketing' | 'legal' | 'price';
+type Tag = 'meta' | 'trims' | 'spec' | 'feature' | 'color' | 'colorint' | 'wheel' | 'marketing' | 'legal' | 'price';
 
 const TAG_ALIASES: Record<string, Tag> = {
   meta: 'meta', מטא: 'meta', כותרת: 'meta',
   trims: 'trims', גרסאות: 'trims', גרסה: 'trims', 'רמות גימור': 'trims', גימור: 'trims',
   spec: 'spec', מפרט: 'spec', 'מפרט טכני': 'spec', נתון: 'spec',
-  feature: 'feature', אבזור: 'feature', מאפיין: 'feature', ציוד: 'feature', features: 'feature',
-  color: 'color', colour: 'color', צבע: 'color', צבעים: 'color',
+  feature: 'feature', אבזור: 'feature', מאפיין: 'feature', ציוד: 'feature', features: 'feature', בטיחות: 'feature',
+  color: 'color', colour: 'color', צבע: 'color', צבעים: 'color', 'צבע חוץ': 'color', 'צבעי חוץ': 'color',
+  colorint: 'colorint', 'color-int': 'colorint', 'צבע פנים': 'colorint', 'צבעי פנים': 'colorint', ריפוד: 'colorint',
   wheel: 'wheel', wheels: 'wheel', חישוק: 'wheel', חישוקים: 'wheel', 'גלגלי סגסוגת': 'wheel',
   marketing: 'marketing', שיווק: 'marketing', 'טקסט שיווקי': 'marketing', תיאור: 'marketing',
   legal: 'legal', משפטי: 'legal', 'טקסט משפטי': 'legal', הערות: 'legal',
@@ -133,10 +134,10 @@ export function cellsToSheet(cells: Cells): SheetParseResult {
         ensureCat(category).items.push({ label, perTrim: padBools(trimmed.map(parseBool), sheet.trims.length) });
         break;
       }
-      case 'color': {
+      case 'color': case 'colorint': {
         const name = row[1] || '';
         if (!name) { issues.push({ row: idx + 1, message: 'שורת צבע ללא שם', cells: row }); break; }
-        const c: ColorEntry = { name, type: normalizeColorType(row[2] || ''), code: validHex(row[3]) };
+        const c: ColorEntry = { name, type: normalizeColorType(row[2] || ''), code: validHex(row[3]), group: tag === 'colorint' ? 'interior' : 'exterior' };
         sheet.colors.push(c);
         break;
       }
@@ -203,8 +204,8 @@ export function sheetToCells(sheet: SpecSheet): Cells {
   for (const c of sheet.features) {
     for (const it of c.items) rows.push(['feature', c.title, it.label, ...it.perTrim.map((b) => (b ? '1' : '0'))]);
   }
-  if (sheet.colors.length) rows.push(['#', 'צבעים: tag | שם | סוג | קוד']);
-  for (const c of sheet.colors) rows.push(['color', c.name, c.type, c.code || '']);
+  if (sheet.colors.length) rows.push(['#', 'צבעים: tag(color=חוץ, colorint=פנים) | שם | סוג | קוד']);
+  for (const c of sheet.colors) rows.push([c.group === 'interior' ? 'colorint' : 'color', c.name, c.type, c.code || '']);
   if (sheet.wheels.length) rows.push(['#', 'חישוקים: tag | תווית | מידה']);
   for (const w of sheet.wheels) rows.push(['wheel', w.label, w.size || '']);
   if (sheet.marketingText) for (const ln of sheet.marketingText.split('\n')) rows.push(['marketing', ln]);
@@ -213,22 +214,39 @@ export function sheetToCells(sheet: SpecSheet): Cells {
   return rows;
 }
 
-/** A blank, self-documenting template (for "download a template" when there's no data). */
+/** A complete, self-documenting template (for "download a template" when there's no data).
+ * Every field type the generator can use is represented, with a worked example per section. */
 export function blankTemplateCells(trims: string[] = ['GT', 'ALLURE']): Cells {
   return [
-    ['# AutoSpec — תבנית גיליון מפרט. מלא ושמור כ-CSV (UTF-8). שורות # הן הערות.'],
+    ['# AutoSpec — תבנית גיליון מפרט מובנה. מלא ושמור כ-CSV (UTF-8) או כ-Excel. שורות שמתחילות ב-# הן הערות.'],
+    ['# העמודה הראשונה היא התג; אפשר עברית או אנגלית. אפשר כמה גיליונות ב-Excel — כולם ייקראו.'],
     ['meta', 'brand', 'פיג׳ו'],
     ['meta', 'model', '3008'],
+    ['#', 'גרסאות/רמות גימור — מגדיר את העמודות לכל שורות הערך שאחריו'],
     ['trims', ...trims],
-    ['#', 'מפרט: tag | קטגוריה | תווית | יחידה | ערך לכל גרסה'],
+    ['#', '— מפרט טכני — tag | קטגוריה | תווית | יחידה | ערך לכל גרסה —'],
+    ['spec', 'מנוע', 'סוג מנוע', '', 'בנזין', 'בנזין'],
     ['spec', 'מנוע', 'נפח מנוע', 'סמ״ק', '1199', '1199'],
+    ['spec', 'מנוע', 'הספק מירבי', 'כ״ס', '130', '130'],
+    ['spec', 'ביצועים', 'מהירות מירבית', 'קמ״ש', '201', '201'],
     ['spec', 'מידות', 'אורך כללי', 'ס״מ', '453.5', '453.5'],
-    ['#', 'אבזור: tag | קטגוריה | תווית | 1/0 לכל גרסה'],
+    ['spec', 'מידות', 'רוחב כללי', 'ס״מ', '189', '189'],
+    ['spec', 'משקל', 'משקל עצמי', 'ק״ג', '1450', '1450'],
+    ['#', '— מערכות בטיחות / אבזור — tag=feature | קטגוריה | תווית | 1/0 לכל גרסה (1=קיים) —'],
     ['feature', 'בטיחות', '6 כריות אוויר', '1', '1'],
-    ['#', 'צבעים: tag | שם | solid/metallic/pearl | קוד#'],
-    ['color', 'לבן', 'solid', ''],
-    ['#', 'חישוקים | מחיר | טקסטים'],
-    ['wheel', 'חישוקי סגסוגת', '19'],
-    ['price', '₪0'],
+    ['feature', 'בטיחות', 'בקרת יציבות ESP', '1', '1'],
+    ['feature', 'אבזור', 'מסך מולטימדיה 10״', '0', '1'],
+    ['feature', 'אבזור', 'בקרת אקלים דו-אזורית', '1', '1'],
+    ['#', '— צבעי חוץ — tag=color | שם | solid/metallic/pearl | קוד# (לא חובה) —'],
+    ['color', 'לבן בנקיז', 'pearl', '#f3f4f6'],
+    ['color', 'אפור פלטינום', 'metallic', '#9aa0a6'],
+    ['#', '— צבעי פנים / ריפוד — tag=colorint —'],
+    ['colorint', 'ריפוד בד שחור', 'solid', '#1d1f22'],
+    ['#', '— חישוקים — tag=wheel | תווית | מידה —'],
+    ['wheel', 'חישוקי סגסוגת', '19"'],
+    ['#', '— טקסטים ומחיר —'],
+    ['marketing', 'טקסט שיווקי קצר על הדגם.'],
+    ['legal', 'הערות משפטיות / ט.ל.ח.'],
+    ['price', 'החל מ-₪0'],
   ];
 }

@@ -22,6 +22,7 @@ export function App() {
   const [doc, setDoc] = React.useState<DocumentIR | null>(null);
   const [screen, setScreen] = React.useState<'import' | 'learn' | 'generate'>('import');
   const [genSpec, setGenSpec] = React.useState<TemplateSpec | null>(null);
+  const [fromGen, setFromGen] = React.useState(false);
   const [cur, setCur] = React.useState(0);
   const [mode, setMode] = React.useState<ViewMode>('editable');
   const [sel, setSel] = React.useState<string | null>(null);
@@ -101,7 +102,7 @@ export function App() {
   };
   const goGenerate = (spec?: TemplateSpec) => { setGenSpec(spec || null); setScreen('generate'); };
   if (!doc && screen === 'learn') return <TemplateScreen onBack={() => setScreen('import')} onGenerate={goGenerate} />;
-  if (!doc && screen === 'generate') return <GenerateScreen initialSpec={genSpec} onCreate={(d) => openDoc(d, genSpec?.id)} onBack={() => setScreen('import')} />;
+  if (!doc && screen === 'generate') return <GenerateScreen initialSpec={genSpec} onCreate={(d) => { setFromGen(true); openDoc(d, genSpec?.id); }} onBack={() => setScreen('import')} />;
   if (!doc) return (
     <ImportScreen
       onImported={openDoc}
@@ -208,7 +209,8 @@ export function App() {
           style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', opacity: exporting ? 0.6 : 1 }}>
           {exporting ? 'מייצא…' : 'ייצוא PDF'}
         </button>
-        <button className="btn btn-ghost btn-sm" onClick={() => setDoc(null)}>ייבוא אחר</button>
+        {fromGen && <button className="btn btn-ghost btn-sm" onClick={() => { setDoc(null); setFromGen(false); setScreen('generate'); }}>← חזרה ליצירה</button>}
+        <button className="btn btn-ghost btn-sm" onClick={() => { setFromGen(false); setDoc(null); }}>ייבוא אחר</button>
       </header>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
@@ -308,6 +310,20 @@ export function App() {
                   onChange={(e) => { const rh = +e.target.value; patchTable(selTable.id, (t) => { t.rowHeight = rh; return t; }); }} style={{ width: '100%', accentColor: 'var(--accent)' }} />
               </label>
               <div>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>רקע תאים (לכל הטבלה)</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                  <button onClick={() => patchBlock(selTable.id, { cellBg: undefined })} title="ללא"
+                    style={{ width: 24, height: 24, borderRadius: 6, background: 'repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 50%/10px 10px', cursor: 'pointer', border: !selTable.cellBg ? '2px solid var(--accent)' : '1px solid var(--line-2)' }} />
+                  {['#ffffff', '#f3f4f6', '#e9eaee', '#1d1f22'].map((c) => (
+                    <button key={c} onClick={() => patchBlock(selTable.id, { cellBg: c })} title={c}
+                      style={{ width: 24, height: 24, borderRadius: 6, background: c, cursor: 'pointer', border: (selTable.cellBg || '').toLowerCase() === c ? '2px solid var(--accent)' : '1px solid var(--line-2)' }} />
+                  ))}
+                  <input type="color" value={/^#[0-9a-f]{6}$/i.test(selTable.cellBg || '') ? selTable.cellBg! : '#ffffff'}
+                    onChange={(e) => patchBlock(selTable.id, { cellBg: e.target.value })}
+                    style={{ width: 28, height: 28, padding: 0, border: '1px solid var(--line-2)', borderRadius: 6, cursor: 'pointer', background: 'none' }} />
+                </div>
+              </div>
+              <div>
                 <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>שורות</div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <button className="btn btn-ghost btn-sm" onClick={() => { const r = editingCell?.tableId === selTable.id ? editingCell.r : selTable.rows.length - 1; addRowAfter(selTable.id, r); }}>+ שורת נתון</button>
@@ -352,6 +368,13 @@ export function App() {
                   {(['start', 'center', 'end'] as const).map((a) => (
                     <button key={a} className={selBlock.align === a ? 'on' : ''} onClick={() => patchBlock(selBlock.id, { align: a })} style={{ flex: 1, fontSize: 12 }}>{a === 'start' ? 'ימין' : a === 'center' ? 'מרכז' : 'שמאל'}</button>
                   ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>כיוון טקסט</div>
+                <div className="seg">
+                  <button className={selBlock.direction === 'rtl' ? 'on' : ''} onClick={() => patchBlock(selBlock.id, { direction: 'rtl', align: 'end' })} style={{ flex: 1, fontSize: 12 }}>RTL ימין-לשמאל</button>
+                  <button className={selBlock.direction === 'ltr' ? 'on' : ''} onClick={() => patchBlock(selBlock.id, { direction: 'ltr', align: 'start' })} style={{ flex: 1, fontSize: 12 }}>LTR שמאל-לימין</button>
                 </div>
               </div>
               {/* colour */}

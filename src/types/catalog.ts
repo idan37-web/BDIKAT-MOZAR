@@ -118,6 +118,8 @@ export interface TableBlockIR extends BlockIR {
   color: string;
   headingColor?: string;
   gridColor?: string;
+  /** optional fill behind ALL data cells (e.g. "#ffffff" to force a clean background). */
+  cellBg?: string;
   direction: TextDirection;
   embeddedFontRef?: EmbeddedFontRef;
 }

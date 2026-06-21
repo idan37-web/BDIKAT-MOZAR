@@ -125,7 +125,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
             style={{
               position: 'absolute', left: b.x * scale, top: b.y * scale, width: b.width * scale, height: b.height * scale,
               opacity: compare ? 0.6 : 1, cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
-              outline: selected ? '1.5px solid var(--accent)' : 'none', background: 'transparent',
+              outline: selected ? '1.5px solid var(--accent)' : 'none', background: b.cellBg || 'transparent',
             }}>
             {b.rows.map((row, r) => {
               const top = r * rh * scale;

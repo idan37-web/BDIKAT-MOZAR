@@ -39,6 +39,8 @@ export interface ColorEntry {
   type: ColorType;
   /** Optional "#rrggbb" swatch, when known. */
   code?: string;
+  /** exterior body colour (default) vs interior upholstery/trim colour. */
+  group?: 'exterior' | 'interior';
 }
 
 export interface WheelEntry {

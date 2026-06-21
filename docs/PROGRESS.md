@@ -65,6 +65,24 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   SAME editor and exports via the SAME vector pipeline. UI: "יצירת קטלוג" screen. `npm run verify:gen` gates it
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
 
+## Feedback round 2 (notes doc)
+- **Multi-sheet .xlsx** (`parseSheet.parseXlsx`): reads EVERY worksheet (rows concatenated), so an
+  "equipment" sheet next to a "spec" sheet is no longer ignored. Comprehensive **downloadable template**
+  (`blankTemplateCells`) covers every field incl. safety/equipment + exterior/interior colours.
+- **Exterior vs interior colours**: `ColorEntry.group`, tags `color` / `colorint`; `layoutColors` shows two
+  groups; new SlotKinds `equipment`, `colors-interior`; content-driven classifier emits them.
+- **Slot label auto-updates with kind**; `SLOT_LABEL` exported; TemplateScreen kind list grouped + shows labels.
+- **Table cell background** (`TableBlockIR.cellBg`) — one control sets all cells (editor + export).
+- **Generated-catalog thumbnails** (`thumbnail.renderThumbnail`) — pages with no source raster now show their
+  real layout in the rail (was blank white).
+- **Editor**: RTL/LTR direction toggle on text. **GenerateScreen**: remove a chosen image; **"← חזרה ליצירה"**
+  returns from the editor to the create screen.
+- **Graphics made conservative** — only emit logo/qr/scale clusters (never a generic cluster), so a table's
+  gridlines can't be rasterized into a black-looking grid.
+- Gates: `verify:structured` now covers multi-sheet xlsx + template + interior colours. All 9 green.
+- STILL DEFERRED: undo/redo; image flip/rotate; fewer-images-than-template proportioning; separating exterior
+  vs interior PHOTO regions on import; per-brand logo asset library (awaiting the user's logo files).
+
 ## User-control + accuracy round (post-Milestone-D feedback)
 - **Content-driven slot classification** (`templateLearning.slotKind`): each region is classified by its
   OWN text/shape, not just the page role — fixes "spec table → marketing-text" and "equipment list →

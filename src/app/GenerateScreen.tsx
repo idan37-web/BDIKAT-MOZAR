@@ -13,6 +13,7 @@ import { cellsToSheet, sheetToCells, blankTemplateCells, type SheetIssue } from 
 import { sheetStats, type SpecSheet } from '../data/specModel';
 import { mapSheetToCatalog, type FieldMapping } from '../data/mapSheetToCatalog';
 import { peugeot3008Sheet } from '../data/samples';
+import { ensureThumbnails } from './thumbnail';
 
 const ROLE_HE: Record<string, string> = {
   cover: 'שער', feature: 'עמוד שיווקי', interior: 'עיצוב פנים', colors: 'צבעים',
@@ -122,6 +123,8 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
       : generateCatalog(spec!, bindings);
     // Milestone B: auto-fit text to its box before opening (shrink→wrap→grow→flag)
     autofitDocument(doc, canvasMeasureFor(family));
+    // generated pages have no source raster → render real thumbnails so the rail isn't blank
+    ensureThumbnails(doc.pages, family);
     onCreate(doc);
   }
 
@@ -246,10 +249,16 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
                       {slot.blockType === 'image' ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                           {bindings[slot.key]?.imageSrc && <img src={bindings[slot.key]!.imageSrc} alt="" style={{ width: '100%', maxHeight: 110, objectFit: 'contain', background: 'var(--surface-3)', borderRadius: 8 }} />}
-                          <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', textAlign: 'center', border: isMissing(slot.key) ? '1px solid var(--danger)' : undefined }}>
-                            {bindings[slot.key]?.imageSrc ? 'החלף תמונה' : 'בחר תמונה'}
-                            <input type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) setImage(slot.key, f); }} />
-                          </label>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <label className="btn btn-ghost btn-sm" style={{ flex: 1, cursor: 'pointer', textAlign: 'center', border: isMissing(slot.key) ? '1px solid var(--danger)' : undefined }}>
+                              {bindings[slot.key]?.imageSrc ? 'החלף תמונה' : 'בחר תמונה'}
+                              <input type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) setImage(slot.key, f); }} />
+                            </label>
+                            {bindings[slot.key]?.imageSrc && (
+                              <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
+                                onClick={() => setBindings((b) => ({ ...b, [slot.key]: { ...b[slot.key], key: slot.key, imageSrc: undefined } }))}>הסר</button>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <textarea

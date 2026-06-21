@@ -180,10 +180,13 @@ function clusterGraphics(ink: Ink[]): GraphicOp[] {
     const colored = bs.filter((b) => b.colored).length;
     const tiny = bs.filter((b) => Math.max(b.w, b.h) <= 20).length;
     if (count < 4 || w < 8 || h < 8 || w > 520 || h > 520) continue; // stray paths / full-page washes out
-    let kind: GraphicOp['kind'] = 'graphic';
+    let kind: GraphicOp['kind'] | null = null;
     if (tiny >= 25 && w < 240 && h < 240 && Math.abs(w - h) < Math.max(w, h) * 0.6) kind = 'qr';
     else if (colored >= 3 && w > h * 1.6) kind = 'scale';
     else if (curves >= 8) kind = 'logo';
+    // Only emit clearly-identified graphics (logo/qr/scale). A generic cluster is most likely a
+    // table's gridlines or stray rules — rasterizing those would bake a black-looking grid.
+    if (!kind) continue;
     out.push({ bbox: { x: Math.round(x0), y: Math.round(y0), width: Math.round(w), height: Math.round(h) }, kind, opCount: count });
   }
   return out.sort((a, b) => b.bbox.width * b.bbox.height - a.bbox.width * a.bbox.height).slice(0, 12);

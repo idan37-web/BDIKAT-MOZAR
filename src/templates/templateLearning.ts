@@ -304,9 +304,10 @@ function slotKind(role: PageRole, r: Region, isLargestText: boolean): SlotKind {
   if (KW.price.test(t)) return 'price';
   if (looksLikeSpec(r)) return 'spec-table';
   if (KW.wheels.test(t) && !KW.colors.test(t)) return 'wheels';
+  if (/ריפוד|פנים הרכב|תא הנוסעים|דמוי עור|בד\b/.test(t) && KW.colors.test(t)) return 'colors-interior';
   if (KW.colors.test(t) && !KW.safety.test(t) && !KW.equipment.test(t)) return 'colors';
   if (KW.safety.test(t)) return 'safety';
-  if (KW.equipment.test(t)) return 'safety'; // equipment lists ride the safety/feature slot
+  if (KW.equipment.test(t)) return 'equipment'; // multimedia/seats/comfort equipment list
   if (role === 'cover' && isLargestText) return 'model-name';
   if (isLargestText && r.maxFont >= 18) return 'heading';
   // page-role fallback only for regions with no strong signal of their own
@@ -318,16 +319,18 @@ function slotKind(role: PageRole, r: Region, isLargestText: boolean): SlotKind {
   return 'marketing-text';
 }
 
-const SLOT_LABEL: Record<SlotKind, string> = {
+export const SLOT_LABEL: Record<SlotKind, string> = {
   'model-name': 'שם הדגם',
   heading: 'כותרת',
   'marketing-text': 'טקסט שיווקי',
   'hero-image': 'תמונת נושא',
   image: 'תמונה',
   'spec-table': 'טבלת מפרט טכני',
-  colors: 'צבעים',
+  colors: 'צבעי חוץ',
+  'colors-interior': 'צבעי פנים',
   wheels: 'חישוקים',
-  safety: 'בטיחות',
+  safety: 'מערכות בטיחות',
+  equipment: 'מפרט אבזור',
   pollution: 'דרגת זיהום',
   price: 'מחיר',
   legal: 'טקסט משפטי',
@@ -390,7 +393,7 @@ function distinctCount(ms: MatchedSlot): number {
 /** Kinds that carry per-model content (used for the single-doc dynamic fallback). */
 const DYNAMIC_KINDS = new Set<SlotKind>([
   'model-name', 'heading', 'marketing-text', 'hero-image', 'image',
-  'spec-table', 'colors', 'wheels', 'safety', 'pollution', 'price',
+  'spec-table', 'colors', 'colors-interior', 'wheels', 'safety', 'equipment', 'pollution', 'price',
 ]);
 
 /**
