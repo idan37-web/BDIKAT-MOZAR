@@ -107,6 +107,14 @@ function drawImageBlock(page: PDFPage, pageH: number, b: ImageBlockIR, img: PDFI
   if (b.flipH) page.pushOperators(scale(-1, 1));
   page.drawImage(img, { x: -drawW / 2, y: -drawH / 2, width: drawW, height: drawH });
   page.pushOperators(popGraphicsState());
+
+  // optional axis-aligned frame around the slot box (drawn after, so it sits on top)
+  if (b.stroke && b.stroke.width > 0) {
+    page.drawRectangle({
+      x: b.x, y: boxBottom, width: b.width, height: b.height,
+      borderColor: hexToRgb(b.stroke.color), borderWidth: b.stroke.width,
+    });
+  }
 }
 
 /**

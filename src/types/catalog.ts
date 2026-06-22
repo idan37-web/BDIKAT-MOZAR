@@ -85,6 +85,10 @@ export interface ImageBlockIR extends BlockIR {
   crop?: { fx: number; fy: number; fw: number; fh: number };
   /** Bounded-fallback only: solid cover color sampled from the page background. */
   mask?: string;
+  /** Optional outline/frame around the image box (points). Rendered in editor + export. */
+  stroke?: { color: string; width: number };
+  /** Outline corner radius in points. */
+  radius?: number;
 }
 
 export interface ShapeBlockIR extends BlockIR {

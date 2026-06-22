@@ -5,6 +5,8 @@ import { readFileSync } from 'node:fs';
 import { importPdf } from '../src/pdf/importPdf';
 import { learnTemplate } from '../src/templates/templateLearning';
 import { parseAiResult, applyAiToSpec, buildPagesPayload } from '../src/ai/geminiClassify';
+import { parseCompletion, applyCompletion } from '../src/ai/geminiComplete';
+import { emptySheet } from '../src/data/specModel';
 import type { DocumentIR } from '../src/types/catalog';
 
 const checks: { name: string; pass: boolean }[] = [];
@@ -45,6 +47,25 @@ const bad = applyAiToSpec(tpl, { pages: [{ index: target.index, role: 'NONSENSE'
 const badSlot = bad.spec.pages.find((p) => p.index === target.index)!.slots.find((s) => s.id === slot.id)!;
 expect('invalid role ignored', bad.spec.pages.find((p) => p.index === target.index)!.role === target.role);
 expect('invalid kind ignored', badSlot.kind === slot.kind);
+
+// 5) catalog-creation AI COMPLETION: parse + merge-only-missing logic (item B)
+const comp = parseCompletion('```json\n{"marketingText":"רכב משפחתי מרווח.","legalText":"ט.ל.ח","features":[{"title":"בטיחות","items":["7 כריות אוויר","ABS"]}],"price":"999999"}\n```');
+expect('completion parse strips fences', comp.marketingText === 'רכב משפחתי מרווח.');
+expect('completion ignores non-text fields (no price leakage)', !('price' in (comp as any)) || (comp as any).price === undefined);
+expect('completion features parsed', comp.features?.[0].items.length === 2);
+
+const base = emptySheet(['GT', 'ALLURE']);
+base.features.push({ title: 'בטיחות', items: [{ label: 'ABS', perTrim: [true, true] }] });
+const { sheet: filled, stats: cstats } = applyCompletion(base, comp);
+expect('marketing filled when empty', filled.marketingText === 'רכב משפחתי מרווח.' && cstats.marketing);
+expect('legal filled when empty', filled.legalText === 'ט.ל.ח' && cstats.legal);
+expect('new feature item added (deduped against existing ABS)', cstats.featureItems === 1 && filled.features[0].items.some((i) => i.label === '7 כריות אוויר'));
+expect('new feature item spans all trims', filled.features[0].items.every((i) => i.perTrim.length === 2));
+
+// merge must NOT overwrite copy that already exists
+const pre = emptySheet(['BASE']); pre.marketingText = 'קיים';
+const { sheet: kept, stats: s2 } = applyCompletion(pre, { marketingText: 'חדש' });
+expect('existing marketing preserved (no overwrite)', kept.marketingText === 'קיים' && !s2.marketing);
 
 let ok = true;
 for (const c of checks) { console.log(`${c.pass ? '✓' : '✗'} ${c.name}`); if (!c.pass) ok = false; }

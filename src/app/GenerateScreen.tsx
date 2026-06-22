@@ -17,6 +17,10 @@ import { mapSheetToCatalog, type FieldMapping } from '../data/mapSheetToCatalog'
 import { peugeot3008Sheet } from '../data/samples';
 import { ensureThumbnails } from './thumbnail';
 import { SpecSheetEditor } from './SpecSheetEditor';
+import { PageView } from './PageView';
+import { completeSheetWithGemini, applyCompletion, COMPLETE_DEFAULT_MODEL } from '../ai/geminiComplete';
+import { getGeminiKey, setGeminiKey } from '../ai/settings';
+import { extractPdfText } from '../pdf/pdfText';
 
 const ROLE_HE: Record<string, string> = {
   cover: 'שער', feature: 'עמוד שיווקי', interior: 'עיצוב פנים', colors: 'צבעים',
@@ -74,6 +78,15 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
   const [dataName, setDataName] = React.useState<string>('');
   const [editData, setEditData] = React.useState(true);
   const [drive, setDrive] = React.useState<DriveType>('phev');
+  // AI completion of missing copy (item B)
+  const [aiOpen, setAiOpen] = React.useState(false);
+  const [aiKey, setAiKey] = React.useState(getGeminiKey());
+  const [aiModel, setAiModel] = React.useState(COMPLETE_DEFAULT_MODEL);
+  const [aiSource, setAiSource] = React.useState('');
+  const [aiBusy, setAiBusy] = React.useState(false);
+  const [aiMsg, setAiMsg] = React.useState<string | null>(null);
+  // live preview of the generated catalog (item E)
+  const [preview, setPreview] = React.useState<DocumentIR | null>(null);
   // the clear row-based editor is the primary view: start it with an empty sheet to fill
   React.useEffect(() => {
     if (spec && editData && !sheet) {
@@ -136,11 +149,16 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
     rd.readAsDataURL(file);
   };
 
-  function create() {
-    if (missing.length) { setShowMissing(true); return; }
+  // brand font family for measuring/rendering the generated doc
+  const genFamily = () => {
     const bf = brandFont(spec!.brand || '');
     if (bf) ensureFontFace(bf);
-    const family = bf ? `'${bf.family}', ${FALLBACK_HEBREW}` : FALLBACK_HEBREW;
+    return bf ? `'${bf.family}', ${FALLBACK_HEBREW}` : FALLBACK_HEBREW;
+  };
+
+  /** Build the real DocumentIR from the current template + sheet/bindings (shared by create + preview). */
+  function buildDoc(): DocumentIR {
+    const family = genFamily();
     // Milestone D: when a structured sheet is loaded, populate spec/feature/colour pages from
     // it (with the manual form supplying images/overrides); otherwise the Stage-7 slot path.
     const doc = sheetHasData(sheet)
@@ -150,7 +168,46 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
     autofitDocument(doc, canvasMeasureFor(family));
     // generated pages have no source raster → render real thumbnails so the rail isn't blank
     ensureThumbnails(doc.pages, family);
-    onCreate(doc);
+    return doc;
+  }
+
+  function create() {
+    if (missing.length) { setShowMissing(true); return; }
+    onCreate(buildDoc());
+  }
+
+  function openPreview() {
+    if (!spec) return;
+    try { setPreview(buildDoc()); }
+    catch (e) { setDataErr(`תצוגה מקדימה נכשלה: ${(e as Error).message}`); }
+  }
+
+  // run AI completion of the missing copy from pasted/uploaded source material
+  async function runAiComplete() {
+    if (!sheet) { setAiMsg('אין גיליון נתונים פעיל למילוי.'); return; }
+    if (!aiKey.trim()) { setAiMsg('הזן מפתח Gemini (חינמי מ-aistudio.google.com).'); setAiOpen(true); return; }
+    setAiBusy(true); setAiMsg(null);
+    try {
+      setGeminiKey(aiKey);
+      const c = await completeSheetWithGemini(sheet, aiSource, aiKey, aiModel);
+      const { sheet: merged, stats } = applyCompletion(sheet, c);
+      setSheet(merged);
+      const parts: string[] = [];
+      if (stats.marketing) parts.push('טקסט שיווקי');
+      if (stats.legal) parts.push('טקסט משפטי');
+      if (stats.featureItems) parts.push(`${stats.featureItems} שורות אבזור`);
+      setAiMsg(parts.length ? `✓ הושלמו: ${parts.join(', ')}.` : 'ה-AI לא מצא תוכן ודאי להוסיף (אולי הכל כבר מלא).');
+    } catch (e) {
+      setAiMsg(`שגיאת AI: ${(e as Error).message}`);
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  async function loadAiSourcePdf(file: File) {
+    setAiMsg('מחלץ טקסט מה-PDF…');
+    try { const txt = await extractPdfText(await file.arrayBuffer()); setAiSource((s) => (s ? s + '\n\n' : '') + txt); setAiMsg(`✓ נטען טקסט מ-${file.name} (${txt.length} תווים).`); }
+    catch (e) { setAiMsg(`קריאת ה-PDF נכשלה: ${(e as Error).message}`); }
   }
 
   const required = (s: SlotSpec) => REQUIRED_KINDS.has(s.kind);
@@ -176,6 +233,7 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
         <span style={{ color: 'var(--ink-3)', fontSize: 13 }}>{slots.length} סלוטים דינמיים</span>
         <div style={{ flex: 1 }} />
         {missing.length > 0 && <span style={{ color: 'var(--danger)', fontSize: 13 }}>חסרים {missing.length} שדות חובה</span>}
+        <button className="btn btn-ghost btn-sm" onClick={openPreview} title="תצוגה מקדימה של העמודים לפי המשאבים שהוספת">👁 תצוגה מקדימה</button>
         <button className="btn btn-sm" onClick={create} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px' }}>צור קטלוג ←</button>
         <button className="btn btn-ghost btn-sm" onClick={onBack}>יציאה</button>
       </header>
@@ -208,7 +266,43 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
               <button className="btn btn-ghost btn-sm" onClick={() => downloadXlsx(`autospec-template-${drive}.xlsx`, writeXlsx(naturalTemplateSheets(drive)))} title="תבנית רב-גיליונות מותאמת לסוג ההנעה">הורד תבנית (Excel)</button>
               <button className="btn btn-ghost btn-sm" onClick={() => downloadCsv('autospec-template.csv', blankTemplateCells())} title="פורמט מתויג חלופי">CSV</button>
               {sheet && <button className="btn btn-ghost btn-sm" onClick={() => downloadCsv(`${sheet.model || 'spec'}.csv`, sheetToCells(sheet))}>הורד כ-CSV</button>}
+              <button className={aiOpen ? 'btn btn-sm on' : 'btn btn-ghost btn-sm'} onClick={() => setAiOpen((v) => !v)} title="השלמת טקסטים חסרים באמצעות AI">✨ השלם עם AI</button>
             </div>
+
+            {/* item B — AI completion of missing marketing / equipment / legal copy */}
+            {aiOpen && (
+              <div style={{ padding: 14, borderBottom: '1px solid var(--line)', background: 'rgba(232,120,30,.05)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
+                  ה-AI ישלים <b>רק טקסטים חסרים</b> (פסקת שיווק, שורות אבזור, טקסט משפטי) מתוך חומר המקור — לעולם לא נתונים מספריים. הדבק טקסט על הדגם או טען PDF.
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12, fontWeight: 700 }}>מפתח Gemini:</span>
+                  <input type="password" value={aiKey} onChange={(e) => setAiKey(e.target.value)} placeholder="מפתח חינמי מ-aistudio.google.com" dir="ltr"
+                    style={{ flex: 1, minWidth: 200, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)', fontFamily: 'var(--mono)' }} />
+                  <label style={{ fontSize: 12, fontWeight: 700 }}>מודל
+                    <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} dir="ltr" style={{ marginInlineStart: 6, padding: 5, borderRadius: 8, border: '1px solid var(--line-2)' }}>
+                      {['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'].map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <textarea value={aiSource} onChange={(e) => setAiSource(e.target.value)} dir="rtl" placeholder="הדבק כאן טקסט שמסביר על הדגם (סקירה, הודעה לעיתונות, דף מוצר)…"
+                  style={{ width: '100%', minHeight: 90, padding: 8, borderRadius: 8, border: '1px solid var(--line-2)', fontFamily: 'var(--font)', resize: 'vertical' }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
+                    טען PDF על הדגם
+                    <input type="file" accept="application/pdf" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) loadAiSourcePdf(f); e.currentTarget.value = ''; }} />
+                  </label>
+                  {aiSource && <button className="btn btn-ghost btn-sm" onClick={() => setAiSource('')}>נקה מקור</button>}
+                  <div style={{ flex: 1 }} />
+                  {aiMsg && <span style={{ fontSize: 12.5, color: aiMsg.startsWith('✓') ? 'var(--ok, #0a7d3b)' : aiMsg.startsWith('שגיאת') ? 'var(--danger)' : 'var(--ink-3)' }}>{aiMsg}</span>}
+                  <button className="btn btn-sm" onClick={runAiComplete} disabled={aiBusy || !sheet}
+                    style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', opacity: aiBusy ? 0.6 : 1 }}>
+                    {aiBusy ? 'משלים…' : '✨ השלם את החסר'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
               {dataErr && <div style={{ color: 'var(--danger)', fontSize: 13 }}>{dataErr}</div>}
               {!sheet && !dataErr && (
@@ -316,6 +410,47 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
             );
           })}
         </div>
+      </div>
+
+      {/* item E — live preview of the generated pages (read-only, rendered from the real IR) */}
+      {preview && <PreviewModal doc={preview} family={genFamily()} onClose={() => setPreview(null)} onCreate={() => { setPreview(null); onCreate(preview); }} />}
+    </div>
+  );
+}
+
+/** Read-only preview overlay: renders each generated page from the IR (the same renderer the
+ * editor uses), so the user sees exactly how the page will look with the resources they added. */
+function PreviewModal({ doc, family, onClose, onCreate }: { doc: DocumentIR; family: string; onClose: () => void; onCreate: () => void }) {
+  const [i, setI] = React.useState(0);
+  const page = doc.pages[i];
+  const W = 560;
+  const scale = Math.min(1, W / page.width);
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(16,20,30,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--surface)', borderRadius: 14, maxHeight: '92vh', width: 'min(96vw, 720px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,.4)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: '1px solid var(--line)' }}>
+          <strong style={{ fontFamily: 'var(--display)' }}>תצוגה מקדימה</strong>
+          <span style={{ color: 'var(--ink-3)', fontSize: 13 }}>עמוד {i + 1} מתוך {doc.pages.length}</span>
+          <div style={{ flex: 1 }} />
+          <button className="btn btn-ghost btn-sm" onClick={() => setI((v) => Math.max(0, v - 1))} disabled={i === 0}>‹ הקודם</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setI((v) => Math.min(doc.pages.length - 1, v + 1))} disabled={i === doc.pages.length - 1}>הבא ›</button>
+          <button className="btn btn-sm" onClick={onCreate} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>פתח בעורך ←</button>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>סגור</button>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto', padding: 20, display: 'flex', justifyContent: 'center', background: 'rgba(255,255,255,.14)' }}>
+          <PageView page={page} scale={scale} mode="reconstructed" fontFamily={family} />
+        </div>
+        {/* page rail */}
+        {doc.pages.length > 1 && (
+          <div style={{ display: 'flex', gap: 6, padding: '8px 12px', borderTop: '1px solid var(--line)', overflowX: 'auto' }}>
+            {doc.pages.map((p, k) => (
+              <button key={p.id} onClick={() => setI(k)} title={`עמוד ${k + 1}`}
+                style={{ flexShrink: 0, width: 52, aspectRatio: `${p.width}/${p.height}`, border: k === i ? '2px solid var(--accent)' : '1px solid var(--line)', borderRadius: 4, overflow: 'hidden', background: '#fff', cursor: 'pointer', padding: 0 }}>
+                {p.previewImage && <img src={p.previewImage} alt="" style={{ width: '100%', display: 'block' }} />}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

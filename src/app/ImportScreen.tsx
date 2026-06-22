@@ -73,23 +73,31 @@ export function ImportScreen({ onImported, onLearnTemplate, onGenerate, onOpenPr
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
       </div>
 
-      {/* Milestone C: library — saved templates + in-progress projects (persist across reload) */}
+      {/* Milestone C: library — saved templates + in-progress projects, FOLDERED BY BRAND */}
       {projects.length > 0 && (
         <Section title={`פרויקטים בעבודה (${projects.length})`}>
-          {projects.map((p) => (
-            <Card key={p.id} thumb={p.thumbnail} title={p.name} sub={`${p.doc.pages.length} עמ׳ · ${rel(p.savedAt)}`}
-              onOpen={() => onOpenProject?.(p.doc)} openLabel="פתח"
-              onDelete={async () => { await deleteProject(p.id); refresh(); }} />
+          {groupByBrand(projects, (p) => p.doc.brand).map(([brand, items]) => (
+            <BrandFolder key={brand} brand={brand} count={items.length}>
+              {items.map((p) => (
+                <Card key={p.id} thumb={p.thumbnail} title={p.name} sub={`${p.doc.pages.length} עמ׳ · ${rel(p.savedAt)}`}
+                  onOpen={() => onOpenProject?.(p.doc)} openLabel="פתח"
+                  onDelete={async () => { await deleteProject(p.id); refresh(); }} />
+              ))}
+            </BrandFolder>
           ))}
         </Section>
       )}
       {templates.length > 0 && (
         <Section title={`תבניות שמורות (${templates.length})`}>
-          {templates.map((t) => (
-            <Card key={t.id} thumb={t.thumbnail} title={t.name} sub={`${t.spec.pages.length} עמ׳ · ${rel(t.savedAt)}`}
-              onOpen={() => onUseTemplate?.(t.spec)} openLabel="צור קטלוג"
-              onDuplicate={async () => { await duplicateTemplate(t.id); refresh(); }}
-              onDelete={async () => { await deleteTemplate(t.id); refresh(); }} />
+          {groupByBrand(templates, (t) => t.spec.brand).map(([brand, items]) => (
+            <BrandFolder key={brand} brand={brand} count={items.length}>
+              {items.map((t) => (
+                <Card key={t.id} thumb={t.thumbnail} title={t.name} sub={`${t.spec.pages.length} עמ׳ · ${rel(t.savedAt)}`}
+                  onOpen={() => onUseTemplate?.(t.spec)} openLabel="צור קטלוג"
+                  onDuplicate={async () => { await duplicateTemplate(t.id); refresh(); }}
+                  onDelete={async () => { await deleteTemplate(t.id); refresh(); }} />
+              ))}
+            </BrandFolder>
           ))}
         </Section>
       )}
@@ -98,11 +106,49 @@ export function ImportScreen({ onImported, onLearnTemplate, onGenerate, onOpenPr
   );
 }
 
+const BRAND_HE: Record<string, string> = {
+  peugeot: 'פיג׳ו', citroen: 'סיטרואן', opel: 'אופל', mg: 'MG', unknown: 'אחר / לא מזוהה',
+};
+function brandLabel(b?: string): string { const k = (b || 'unknown').toLowerCase(); return BRAND_HE[k] || (b || 'אחר'); }
+
+/** Group library items by brand, sorted by item count (largest first), "unknown" last. */
+function groupByBrand<T>(items: T[], getBrand: (t: T) => string | undefined): [string, T[]][] {
+  const map = new Map<string, T[]>();
+  for (const it of items) {
+    const key = (getBrand(it) || 'unknown').toLowerCase();
+    (map.get(key) || map.set(key, []).get(key)!).push(it);
+  }
+  return [...map.entries()].sort((a, b) => {
+    if (a[0] === 'unknown') return 1; if (b[0] === 'unknown') return -1;
+    return b[1].length - a[1].length;
+  });
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginTop: 30 }}>
       <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 10 }}>{title}</div>
-      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>{children}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
+    </div>
+  );
+}
+
+/** A collapsible per-brand folder holding its cards in a responsive grid. */
+function BrandFolder({ brand, count, children }: { brand: string; count: number; children: React.ReactNode }) {
+  const [open, setOpen] = React.useState(true);
+  return (
+    <div style={{ border: '1px solid var(--line)', borderRadius: 12, background: 'var(--surface)', overflow: 'hidden' }}>
+      <button onClick={() => setOpen((v) => !v)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', background: 'var(--surface-2)', border: 'none', borderBottom: open ? '1px solid var(--line)' : 'none' }}>
+        <span style={{ fontSize: 14 }}>{open ? '📂' : '📁'}</span>
+        <span style={{ fontWeight: 800, fontSize: 14 }}>{brandLabel(brand)}</span>
+        <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>({count})</span>
+        <div style={{ flex: 1 }} />
+        <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>{open ? '▾' : '◂'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: 12, display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>{children}</div>
+      )}
     </div>
   );
 }

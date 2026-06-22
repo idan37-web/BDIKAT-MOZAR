@@ -137,17 +137,28 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
       {showBlocks && page.blocks.filter(isImageBlock).filter((b) => !b.deleted).map((b: ImageBlockIR) => {
         const selected = isSel(b.id);
         return (
-          <img key={b.id} src={b.src} alt="" draggable={false}
-            onMouseDown={interactive ? (e) => startMove(b, e) : undefined}
-            style={{
-              position: 'absolute', left: b.x * scale, top: b.y * scale,
-              width: b.width * scale, height: b.height * scale,
-              objectFit: b.fit || 'cover', userSelect: 'none',
-              opacity: compare ? 0.6 : 1,
-              transform: `rotate(${b.rotation || 0}deg) scaleX(${b.flipH ? -1 : 1})`, transformOrigin: 'center',
-              cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
-              outline: selected ? '1.5px solid var(--accent)' : 'none',
-            }} />
+          <span key={b.id} style={{ position: 'absolute', left: b.x * scale, top: b.y * scale, width: b.width * scale, height: b.height * scale }}>
+            <img src={b.src} alt="" draggable={false}
+              onMouseDown={interactive ? (e) => startMove(b, e) : undefined}
+              style={{
+                position: 'absolute', inset: 0,
+                width: '100%', height: '100%',
+                objectFit: b.fit || 'cover', userSelect: 'none',
+                opacity: compare ? 0.6 : 1,
+                transform: `rotate(${b.rotation || 0}deg) scaleX(${b.flipH ? -1 : 1})`, transformOrigin: 'center',
+                cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
+                outline: selected ? '1.5px solid var(--accent)' : 'none',
+              }} />
+            {/* axis-aligned frame around the box (kept outside the rotate/flip transform) */}
+            {b.stroke && (
+              <span style={{
+                position: 'absolute', inset: 0, pointerEvents: 'none',
+                border: `${Math.max(0.5, b.stroke.width * scale)}px solid ${b.stroke.color}`,
+                borderRadius: (b.radius || 0) * scale, boxSizing: 'border-box',
+                opacity: compare ? 0.6 : 1,
+              }} />
+            )}
+          </span>
         );
       })}
 

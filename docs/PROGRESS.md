@@ -65,6 +65,27 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   SAME editor and exports via the SAME vector pipeline. UI: "יצירת קטלוג" screen. `npm run verify:gen` gates it
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
 
+## Feedback round 6 (drive-type templates · AI completion · zoom · image frame · preview · brand folders)
+- **Drive-type data templates** (`workbookAdapter.naturalTemplateSheets(drive, trims)`): engine + battery
+  sheets tailored to `petrol|hybrid|phev|ev` (fields transcribed from the four real workbooks; `DRIVE_LABELS`,
+  `HAS_BATTERY`). A drive-type `<select>` sits next to the Excel download in BOTH `TemplateScreen`
+  (learn-mode, "הורד טבלת נתונים") and `GenerateScreen`. ⚠ signature is `(drive, trims)` — callers/gates pass
+  drive FIRST (e.g. `naturalTemplateSheets('phev', ['GT','ALLURE'])`).
+- **AI text completion in create-catalog** (`src/ai/geminiComplete.ts`): fills ONLY missing copy (marketing /
+  equipment bullets / legal) from pasted text or an uploaded PDF (`src/pdf/pdfText.ts` extracts text via
+  `getTextContent`). NEVER invents numeric spec/price (`parseCompletion` drops non-text fields). `applyCompletion`
+  is merge-only-if-empty + dedupes feature items, spans all trims. Default model **gemini-2.5-flash** (smartest
+  free Flash; there is NO "Flash 3.1"). UI: "✨ השלם עם AI" panel in the structured-data block. Gate `verify:ai` extended.
+- **Canvas zoom** (`App`): `zoom` state independent of the page rail; header − / % / + control; `scale = fitScale * zoom`.
+- **Image frame** (`ImageBlockIR.stroke {color,width}` + `radius`): editor draws an axis-aligned frame OUTSIDE the
+  rotate/flip transform (a wrapper `<span>` + bordered overlay); export draws a `drawRectangle` border after the image.
+  Panel: "קו מתאר" add/remove + colour + thickness + corner radius.
+- **Create-catalog PREVIEW** (`GenerateScreen` → `PreviewModal`): `buildDoc()` factored out of `create()`; the
+  preview renders each generated page read-only via `PageView mode="reconstructed"` (same renderer as the editor),
+  with page nav + a thumbnail rail + "פתח בעורך ←". WYSIWYG of how the page looks with the resources added.
+- **Home folders by brand** (`ImportScreen`): projects + templates grouped into collapsible per-brand folders
+  (`groupByBrand` by `doc.brand` / `spec.brand`; `BRAND_HE` labels; "unknown" last; `BrandFolder` component).
+
 ## Feedback round 5 (undo/redo · image transforms · create-screen)
 - **Undo/Redo** (`App`): history-aware `setDoc` that COALESCES rapid changes (a drag = one undo step);
   Ctrl/⌘+Z / Shift+Z / Ctrl+Y, header ↶ ↷ buttons (disabled when empty). `resetHistory` on open.

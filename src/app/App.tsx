@@ -61,6 +61,7 @@ export function App() {
   const [fromGen, setFromGen] = React.useState(false);
   const [cur, setCur] = React.useState(0);
   const [mode, setMode] = React.useState<ViewMode>('editable');
+  const [zoom, setZoom] = React.useState(1); // canvas zoom, independent of page rail
   const [sel, setSel] = React.useState<string | null>(null);
   const [multi, setMulti] = React.useState<Set<string>>(() => new Set());
   const [editing, setEditing] = React.useState<string | null>(null);
@@ -167,7 +168,8 @@ export function App() {
   );
 
   const page = doc.pages[cur];
-  const scale = Math.min(1, 880 / page.width);
+  const fitScale = Math.min(1, 880 / page.width);
+  const scale = fitScale * zoom;
   const brandFamily = bf ? `'${bf.family}', ${FALLBACK_HEBREW}` : FALLBACK_HEBREW;
   const selAny = page.blocks.find((b) => b.id === sel);
   const selBlock = selAny?.type === 'text' ? (selAny as TextBlockIR) : undefined;
@@ -323,6 +325,11 @@ export function App() {
         </div>
         {mode === 'editable' && <button className={showLayers ? 'btn btn-sm on' : 'btn btn-ghost btn-sm'} onClick={() => setShowLayers((v) => !v)} style={{ fontSize: 12 }}>שכבות</button>}
         {mode === 'editable' && <button className="btn btn-ghost btn-sm" onClick={selectAll} style={{ fontSize: 12 }}>בחר הכל</button>}
+        <div className="seg" style={{ display: 'flex', alignItems: 'center' }} title="גודל תצוגת הקאנבס (לא משנה את גודל העמוד)">
+          <button onClick={() => setZoom((z) => Math.max(0.25, Math.round((z - 0.1) * 100) / 100))} style={{ fontSize: 13, padding: '0 8px' }}>−</button>
+          <button onClick={() => setZoom(1)} style={{ fontSize: 11, minWidth: 46 }}>{Math.round(zoom * 100)}%</button>
+          <button onClick={() => setZoom((z) => Math.min(4, Math.round((z + 0.1) * 100) / 100))} style={{ fontSize: 13, padding: '0 8px' }}>+</button>
+        </div>
         <button className="btn btn-ghost btn-sm" onClick={undo} disabled={!canUndo} title="בטל (Ctrl/⌘+Z)" style={{ fontSize: 14, opacity: canUndo ? 1 : 0.4 }}>↶</button>
         <button className="btn btn-ghost btn-sm" onClick={redo} disabled={!canRedo} title="חזור (Ctrl/⌘+Shift+Z)" style={{ fontSize: 14, opacity: canRedo ? 1 : 0.4 }}>↷</button>
         <div style={{ flex: 1 }} />
@@ -472,6 +479,37 @@ export function App() {
                 <label style={{ fontSize: 12, fontWeight: 700, flex: 1 }}>גובה
                   <input type="number" value={Math.round(selImage.height)} onChange={(e) => patchBlock(selImage.id, { height: +e.target.value })} style={{ width: '100%', marginTop: 4, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)' }} />
                 </label>
+              </div>
+              {/* outline / frame around the image */}
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>קו מתאר</span>
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}
+                    onClick={() => patchBlock(selImage.id, { stroke: selImage.stroke ? undefined : { color: '#111418', width: 2 } })}>
+                    {selImage.stroke ? 'הסר' : 'הוסף'}
+                  </button>
+                </div>
+                {selImage.stroke && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                      {['#111418', '#ffffff', '#c0142d', '#1b4fa0', '#0a7d3b', '#9aa0a6'].map((c) => (
+                        <button key={c} onClick={() => patchBlock(selImage.id, { stroke: { color: c, width: selImage.stroke!.width } })} title={c}
+                          style={{ width: 22, height: 22, borderRadius: 6, background: c, cursor: 'pointer', border: (selImage.stroke!.color || '').toLowerCase() === c ? '2px solid var(--accent)' : '1px solid var(--line-2)' }} />
+                      ))}
+                      <input type="color" value={/^#[0-9a-f]{6}$/i.test(selImage.stroke.color) ? selImage.stroke.color : '#111418'}
+                        onChange={(e) => patchBlock(selImage.id, { stroke: { color: e.target.value, width: selImage.stroke!.width } })}
+                        style={{ width: 26, height: 26, padding: 0, border: '1px solid var(--line-2)', borderRadius: 6, cursor: 'pointer', background: 'none' }} />
+                    </div>
+                    <label style={{ fontSize: 12, fontWeight: 700 }}>עובי: {selImage.stroke.width}
+                      <input type="range" min={0.5} max={12} step={0.5} value={selImage.stroke.width}
+                        onChange={(e) => patchBlock(selImage.id, { stroke: { color: selImage.stroke!.color, width: +e.target.value } })} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                    </label>
+                    <label style={{ fontSize: 12, fontWeight: 700 }}>עיגול פינות: {Math.round(selImage.radius || 0)}
+                      <input type="range" min={0} max={40} step={1} value={selImage.radius || 0}
+                        onChange={(e) => patchBlock(selImage.id, { radius: +e.target.value })} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                    </label>
+                  </div>
+                )}
               </div>
               <button className="btn btn-ghost btn-sm" onClick={removeBg}>הסר רקע (שקיפות)</button>
               <div className="seg">
