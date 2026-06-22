@@ -31,11 +31,13 @@ interface Props {
   onStartEditCell?: (ref: CellRef) => void;
   onChangeCell?: (ref: CellRef, text: string) => void;
   onCommitCell?: () => void;
+  /** ref to the page element, so a marquee can be started from outside the canvas. */
+  pageRef?: React.Ref<HTMLDivElement>;
 }
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se';
 
-export function PageView({ page, scale, mode, fontFamily, selectedId, selectedIds, editingId, onSelect, onMarquee, onStartEdit, onChangeText, onResize, onCommit, editingCell, onStartEditCell, onChangeCell, onCommitCell }: Props) {
+export function PageView({ page, scale, mode, fontFamily, selectedId, selectedIds, editingId, onSelect, onMarquee, onStartEdit, onChangeText, onResize, onCommit, editingCell, onStartEditCell, onChangeCell, onCommitCell, pageRef }: Props) {
   const isSel = (id: string) => selectedIds ? selectedIds.has(id) : selectedId === id;
   const singleSel = !selectedIds || selectedIds.size <= 1;
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -112,6 +114,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
 
   return (
     <div
+      ref={pageRef}
       onMouseDown={startMarquee}
       style={{ position: 'relative', width: w, height: h, background: '#fff', boxShadow: '0 10px 28px rgba(28,48,90,.18)', borderRadius: 2, overflow: 'hidden', flexShrink: 0 }}
     >

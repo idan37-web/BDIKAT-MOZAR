@@ -7,6 +7,7 @@ import { ImportScreen } from './ImportScreen';
 import { TemplateScreen } from './TemplateScreen';
 import { GenerateScreen } from './GenerateScreen';
 import { PageView, type ViewMode, type CellRef } from './PageView';
+import { LayersPanel } from './LayersPanel';
 import { brandFont, ensureFontFace, FALLBACK_HEBREW, loadExportFonts } from './brandFont';
 import { exportPdf } from '../pdf/exportPdf';
 import { saveProject } from '../store/library';
@@ -64,6 +65,9 @@ export function App() {
   const [multi, setMulti] = React.useState<Set<string>>(() => new Set());
   const [editing, setEditing] = React.useState<string | null>(null);
   const [editingCell, setEditingCell] = React.useState<CellRef | null>(null);
+  const [showLayers, setShowLayers] = React.useState(false);
+  const [wrapMarquee, setWrapMarquee] = React.useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const pageElRef = React.useRef<HTMLDivElement>(null);
   const clearSel = () => { setSel(null); setMulti(new Set()); setEditing(null); setEditingCell(null); };
   const [exporting, setExporting] = React.useState(false);
   const [exportErr, setExportErr] = React.useState<string | null>(null);
@@ -245,6 +249,32 @@ export function App() {
     if (!ids.length) return;
     setMulti(new Set(ids)); setSel(ids[ids.length - 1]); setEditing(null); setEditingCell(null);
   };
+  // toggle one block in the multi-selection (from the layers checklist)
+  const toggleSel = (id: string) => { setMulti((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; }); setSel(id); setEditing(null); setEditingCell(null); };
+  const selectOnly = (id: string) => { setMulti(new Set([id])); setSel(id); setEditing(null); setEditingCell(null); };
+
+  // rubber-band selection that can START in the grey area OUTSIDE the page (maps to page coords)
+  const startWrapMarquee = (e: React.MouseEvent) => {
+    if (mode !== 'editable' || e.target !== e.currentTarget) return;
+    const pageEl = pageElRef.current; if (!pageEl) return;
+    const pr = pageEl.getBoundingClientRect();
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    if (!additive) clearSel();
+    const sx = e.clientX, sy = e.clientY;
+    setWrapMarquee({ x0: sx, y0: sy, x1: sx, y1: sy });
+    const move = (ev: MouseEvent) => setWrapMarquee({ x0: sx, y0: sy, x1: ev.clientX, y1: ev.clientY });
+    const up = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      setWrapMarquee(null);
+      if (Math.abs(ev.clientX - sx) < 3 && Math.abs(ev.clientY - sy) < 3) return;
+      const x0 = (Math.min(sx, ev.clientX) - pr.left) / scale, y0 = (Math.min(sy, ev.clientY) - pr.top) / scale;
+      const x1 = (Math.max(sx, ev.clientX) - pr.left) / scale, y1 = (Math.max(sy, ev.clientY) - pr.top) / scale;
+      const ids = page.blocks.filter((b) => !b.deleted && !(b.x > x1 || b.x + b.width < x0 || b.y > y1 || b.y + b.height < y0)).map((b) => b.id);
+      setMulti((prev) => { const n = additive ? new Set(prev) : new Set<string>(); ids.forEach((id) => n.add(id)); return n; });
+      if (ids.length) setSel(ids[ids.length - 1]);
+    };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+  };
   // bring the selection to the front / send to the back (z-order control)
   const changeZ = (mode: 'front' | 'back') => {
     const ids = multi.size ? multi : (sel ? new Set([sel]) : null);
@@ -291,6 +321,7 @@ export function App() {
             <button key={m.id} className={mode === m.id ? 'on' : ''} onClick={() => { setMode(m.id); setEditing(null); }} style={{ fontSize: 12 }}>{m.label}</button>
           ))}
         </div>
+        {mode === 'editable' && <button className={showLayers ? 'btn btn-sm on' : 'btn btn-ghost btn-sm'} onClick={() => setShowLayers((v) => !v)} style={{ fontSize: 12 }}>שכבות</button>}
         {mode === 'editable' && <button className="btn btn-ghost btn-sm" onClick={selectAll} style={{ fontSize: 12 }}>בחר הכל</button>}
         <button className="btn btn-ghost btn-sm" onClick={undo} disabled={!canUndo} title="בטל (Ctrl/⌘+Z)" style={{ fontSize: 14, opacity: canUndo ? 1 : 0.4 }}>↶</button>
         <button className="btn btn-ghost btn-sm" onClick={redo} disabled={!canRedo} title="חזור (Ctrl/⌘+Shift+Z)" style={{ fontSize: 14, opacity: canRedo ? 1 : 0.4 }}>↷</button>
@@ -307,6 +338,15 @@ export function App() {
         <button className="btn btn-ghost btn-sm" onClick={() => { setFromGen(false); resetHistory(null); }}>ייבוא אחר</button>
       </header>
 
+      {wrapMarquee && (
+        <div style={{
+          position: 'fixed', pointerEvents: 'none', zIndex: 9999,
+          left: Math.min(wrapMarquee.x0, wrapMarquee.x1), top: Math.min(wrapMarquee.y0, wrapMarquee.y1),
+          width: Math.abs(wrapMarquee.x1 - wrapMarquee.x0), height: Math.abs(wrapMarquee.y1 - wrapMarquee.y0),
+          border: '1px solid var(--accent)', background: 'rgba(232,120,30,.12)',
+        }} />
+      )}
+
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* page rail */}
         <div style={{ width: 116, flexShrink: 0, overflowY: 'auto', padding: 10, borderInlineEnd: '1px solid var(--line)', background: 'var(--surface-2)' }}>
@@ -318,9 +358,17 @@ export function App() {
           ))}
         </div>
 
+        {/* layers / elements checklist */}
+        {mode === 'editable' && showLayers && (
+          <LayersPanel blocks={page.blocks} selectedIds={multi.size ? multi : (sel ? new Set([sel]) : new Set())}
+            onToggle={toggleSel} onSelectOnly={selectOnly} onClear={clearSel} />
+        )}
+
         {/* canvas */}
-        <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: 28, background: 'rgba(255,255,255,.14)' }}>
+        <div onMouseDown={startWrapMarquee}
+          style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: 28, background: 'rgba(255,255,255,.14)' }}>
           <PageView
+            pageRef={pageElRef}
             page={page} scale={scale} mode={mode} fontFamily={brandFamily}
             selectedId={sel} selectedIds={multi} editingId={editing}
             onSelect={(id, additive) => {
