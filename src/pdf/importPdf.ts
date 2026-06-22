@@ -94,7 +94,7 @@ export async function importPdf(
           id: `${id}_img${i}`, type: 'image', x: op.bbox.x, y: op.bbox.y, width: op.bbox.width, height: op.bbox.height,
           rotation: 0, zIndex: op.opIndex, source: 'original',
           originalBBox: { x: op.bbox.x, y: op.bbox.y, width: op.bbox.width, height: op.bbox.height },
-          src, originalImageRef: src, fit: 'cover',
+          src, originalImageRef: src, fit: 'cover', crop: op.crop,
         });
       }
 

@@ -77,6 +77,21 @@ function drawImageBlock(page: PDFPage, pageH: number, b: ImageBlockIR, img: PDFI
     page.drawRectangle({ x: b.x, y: boxBottom, width: b.width, height: b.height, color: rgb(0.92, 0.92, 0.93) });
     return;
   }
+  // crop = source-fraction window to SHOW: scale the image so that window fills the box, clip the rest.
+  const cr = b.crop && b.crop.fw > 0 && b.crop.fh > 0 ? b.crop : null;
+  if (cr) {
+    const dW = b.width / cr.fw, dH = b.height / cr.fh;
+    const dX = b.x - cr.fx * dW;
+    const dYb = pageH - b.y - dH + cr.fy * dH; // bottom-left of the full image
+    page.pushOperators(pushGraphicsState(), rectangle(b.x, boxBottom, b.width, b.height), clip(), endPath());
+    if (b.flipH) page.pushOperators(translate(b.x + b.width / 2, 0), scale(-1, 1), translate(-(b.x + b.width / 2), 0));
+    page.drawImage(img, { x: dX, y: dYb, width: dW, height: dH });
+    page.pushOperators(popGraphicsState());
+    if (b.stroke && b.stroke.width > 0) {
+      page.drawRectangle({ x: b.x, y: boxBottom, width: b.width, height: b.height, borderColor: hexToRgb(b.stroke.color), borderWidth: b.stroke.width });
+    }
+    return;
+  }
   const iw = img.width;
   const ih = img.height;
   const fit = b.fit || 'cover';

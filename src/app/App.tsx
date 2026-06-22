@@ -511,6 +511,40 @@ export function App() {
                   </div>
                 )}
               </div>
+              {/* manual crop — source-fraction window to show (left/right/top/bottom insets) */}
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>חיתוך תמונה</span>
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}
+                    onClick={() => patchBlock(selImage.id, { crop: selImage.crop ? undefined : { fx: 0, fy: 0, fw: 1, fh: 1 } })}>
+                    {selImage.crop ? 'בטל חיתוך' : 'הפעל חיתוך'}
+                  </button>
+                </div>
+                {selImage.crop && (() => {
+                  const c = selImage.crop;
+                  const left = Math.round(c.fx * 100), top = Math.round(c.fy * 100);
+                  const right = Math.round((1 - c.fx - c.fw) * 100), bottom = Math.round((1 - c.fy - c.fh) * 100);
+                  const setCrop = (l: number, r: number, t: number, btm: number) => {
+                    const fx = Math.min(0.9, Math.max(0, l / 100)), fy = Math.min(0.9, Math.max(0, t / 100));
+                    const fw = Math.max(0.1, 1 - fx - Math.max(0, r / 100)), fh = Math.max(0.1, 1 - fy - Math.max(0, btm / 100));
+                    patchBlock(selImage.id, { crop: { fx, fy, fw, fh } });
+                  };
+                  const Row = ({ label, val, on }: { label: string; val: number; on: (v: number) => void }) => (
+                    <label style={{ fontSize: 12, fontWeight: 700, display: 'block' }}>{label}: {val}%
+                      <input type="range" min={0} max={80} value={val} onChange={(e) => on(+e.target.value)} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                    </label>
+                  );
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <Row label="חיתוך משמאל" val={left} on={(v) => setCrop(v, right, top, bottom)} />
+                      <Row label="חיתוך מימין" val={right} on={(v) => setCrop(left, v, top, bottom)} />
+                      <Row label="חיתוך מלמעלה" val={top} on={(v) => setCrop(left, right, v, bottom)} />
+                      <Row label="חיתוך מלמטה" val={bottom} on={(v) => setCrop(left, right, top, v)} />
+                      <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, marginTop: 2 }} onClick={() => patchBlock(selImage.id, { crop: { fx: 0, fy: 0, fw: 1, fh: 1 } })}>אפס חיתוך</button>
+                    </div>
+                  );
+                })()}
+              </div>
               <button className="btn btn-ghost btn-sm" onClick={removeBg}>הסר רקע (שקיפות)</button>
               <div className="seg">
                 <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>

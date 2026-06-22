@@ -14,8 +14,9 @@ import { classifyWithGemini, applyAiToSpec } from '../ai/geminiClassify';
 import { getGeminiKey, setGeminiKey, getGeminiModel, setGeminiModel } from '../ai/settings';
 import { naturalTemplateSheets, DRIVE_LABELS, type DriveType } from '../data/workbookAdapter';
 import { writeXlsx } from '../data/writeXlsx';
+import { GEMINI_MODELS } from '../ai/models';
 
-const AI_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+const AI_MODELS = GEMINI_MODELS;
 
 function downloadXlsxFile(name: string, bytes: Uint8Array) {
   const blob = new Blob([bytes as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });

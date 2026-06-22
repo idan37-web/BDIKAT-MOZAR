@@ -22,6 +22,14 @@ expect('image objects decoded headlessly (no DOM)', imgs.length >= 20);
 expect('sources are real data URLs (png/jpeg)', imgs.every((i) => /^data:image\/(png|jpeg);base64,/.test(i.src)));
 expect('no render-crop fallback needed (clean sources)', imgs.every((i) => i.src.length > 64));
 
+// source-crop detection: clipped images carry a sane fraction window, and it does NOT over-trigger
+const cropped = imgs.filter((i) => i.crop);
+expect('some source-clipped images detected (crop window)', cropped.length >= 1);
+expect('crop detection does not over-trigger (most images uncropped)', cropped.length < imgs.length * 0.5);
+expect('crop fractions are sane 0..1 windows', cropped.every((i) => {
+  const c = i.crop!; return c.fw > 0.05 && c.fh > 0.05 && c.fx >= -0.001 && c.fy >= -0.001 && c.fx + c.fw <= 1.01 && c.fy + c.fh <= 1.01;
+}));
+
 // dedupe: no two image blocks on the same page heavily overlap (the black-box duplicate is dropped)
 const iouBB = (a: typeof imgs[0], b: typeof imgs[0]) => {
   const ix = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));

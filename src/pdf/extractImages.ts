@@ -16,11 +16,13 @@ function apply(m: Mat, x: number, y: number): [number, number] { return [m[0] * 
 
 export interface ImageOp {
   opIndex: number;
-  bbox: { x: number; y: number; width: number; height: number }; // PDF points, top-left
+  bbox: { x: number; y: number; width: number; height: number }; // PDF points, top-left (VISIBLE region)
   name?: string;     // named XObject objId
   inline?: any;      // inline image object (paintInlineImageXObject)
   mask?: boolean;    // paintImageMaskXObject (stencil)
   hadSMask?: boolean;
+  /** Source-fraction window actually visible when the source PDF clipped the image (0..1). */
+  crop?: { fx: number; fy: number; fw: number; fh: number };
 }
 
 /** A vector rectangle: a filled panel/strip, or a thin stroked line (table gridline). */
@@ -59,6 +61,10 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
   const ol = await page.getOperatorList();
   const fns: number[] = ol.fnArray; const args: any[] = ol.argsArray;
   let ctm: Mat = [...IDENT] as Mat; const stack: Mat[] = [];
+  // active clip rectangle in device space (y-up: [minX,minY,maxX,maxY]); tracked across save/restore
+  type Rect4 = { minX: number; minY: number; maxX: number; maxY: number };
+  let clip: Rect4 | null = null; const clipStack: (Rect4 | null)[] = [];
+  let pendingClip = false; // OPS.clip seen → apply current path as clip at the next endPath/paint
   let smaskActive = false;
   let fill = '#000000';
   let strokeCol = '#000000';
@@ -94,11 +100,21 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
     const minX = Math.min(x0, x1), maxX = Math.max(x0, x1), minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
     return { minX, maxX, minY, maxY, w: maxX - minX, h: maxY - minY };
   };
+  // when an OPS.clip was flagged, fold the current path's device rect into the active clip
+  const applyPendingClip = () => {
+    if (!pendingClip) return;
+    pendingClip = false;
+    if (!pathBox || pathBox.length !== 4) return;
+    const { minX, minY, maxX, maxY } = xform(pathBox);
+    const nc = { minX, minY, maxX, maxY };
+    clip = clip ? { minX: Math.max(clip.minX, nc.minX), minY: Math.max(clip.minY, nc.minY), maxX: Math.min(clip.maxX, nc.maxX), maxY: Math.min(clip.maxY, nc.maxY) } : nc;
+  };
 
   for (let i = 0; i < fns.length; i++) {
     const fn = fns[i], a = args[i];
-    if (fn === OPS.save) stack.push([...ctm] as Mat);
-    else if (fn === OPS.restore) { if (stack.length) ctm = stack.pop() as Mat; }
+    if (fn === OPS.save) { stack.push([...ctm] as Mat); clipStack.push(clip); }
+    else if (fn === OPS.restore) { if (stack.length) ctm = stack.pop() as Mat; if (clipStack.length) clip = clipStack.pop() as Rect4 | null; }
+    else if (fn === OPS.clip || fn === OPS.eoClip) { pendingClip = true; }
     else if (fn === OPS.transform) ctm = mul(ctm, a as Mat);
     else if (fn === OPS.setGState) { try { smaskActive = JSON.stringify(a).includes('SMask') ? !JSON.stringify(a).includes('"None"') : smaskActive; } catch { /* ignore */ } }
     else if (fn === OPS.setFillRGBColor) { const c = a as number[]; fill = toHex(c[0], c[1], c[2]); }
@@ -140,18 +156,32 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
         }
         recordInk(strokeCol);
       }
+      applyPendingClip();
       pathBox = null; pathCurves = 0;
-    } else if (fn === OPS.endPath) { pathBox = null; pathCurves = 0; }
+    } else if (fn === OPS.endPath) { applyPendingClip(); pathBox = null; pathCurves = 0; }
     else if (isXObj(fn) || fn === OPS.paintInlineImageXObject || fn === OPS.paintImageMaskXObject) {
       const pts = [apply(ctm, 0, 0), apply(ctm, 1, 0), apply(ctm, 1, 1), apply(ctm, 0, 1)];
       const xs = pts.map((p) => p[0]); const ys = pts.map((p) => p[1]);
       const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
       const w = maxX - minX, h = maxY - minY;
       if (w < 10 || h < 10) continue; // keep small icons (was 20); tiny noise still excluded
-      const bbox = { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) };
-      if (fn === OPS.paintInlineImageXObject) images.push({ opIndex: i, bbox, inline: a?.[0], hadSMask: smaskActive });
-      else if (fn === OPS.paintImageMaskXObject) images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, mask: true, hadSMask: smaskActive });
-      else images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, hadSMask: smaskActive });
+      let bbox = { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) };
+      // If the source PDF clipped this image to a smaller window, record the VISIBLE region as the
+      // box plus a source-fraction crop, so the editor/export show it exactly as the original did.
+      let crop: ImageOp['crop'];
+      if (clip) {
+        const ix0 = Math.max(minX, clip.minX), iy0 = Math.max(minY, clip.minY);
+        const ix1 = Math.min(maxX, clip.maxX), iy1 = Math.min(maxY, clip.maxY);
+        const vw = ix1 - ix0, vh = iy1 - iy0;
+        const visFrac = (vw * vh) / (w * h);
+        if (vw > 4 && vh > 4 && visFrac > 0.05 && visFrac < 0.92) {
+          crop = { fx: (ix0 - minX) / w, fy: (maxY - iy1) / h, fw: vw / w, fh: vh / h };
+          bbox = { x: Math.round(ix0), y: Math.round(pageHeight - iy1), width: Math.round(vw), height: Math.round(vh) };
+        }
+      }
+      if (fn === OPS.paintInlineImageXObject) images.push({ opIndex: i, bbox, inline: a?.[0], hadSMask: smaskActive, crop });
+      else if (fn === OPS.paintImageMaskXObject) images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, mask: true, hadSMask: smaskActive, crop });
+      else images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, hadSMask: smaskActive, crop });
     }
   }
   return { images, shapes, graphics: clusterGraphics(ink) };

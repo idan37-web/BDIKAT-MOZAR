@@ -65,6 +65,30 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   SAME editor and exports via the SAME vector pipeline. UI: "יצירת קטלוג" screen. `npm run verify:gen` gates it
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
 
+## Feedback round 7 (AI-completion bugfix · Gemini 3 · brand logos · image crop)
+- **AI-completion "nothing happens" FIXED**: two `[spec?.id]` effects fought — the reset effect ran
+  AFTER the starter-seed effect and set `sheet=null`, so the "השלם את החסר" button was `disabled={!sheet}`.
+  Merged into ONE effect (reset → seed). Button no longer gated on `sheet`; `runAiComplete` self-heals
+  (creates a starter sheet if none) and always surfaces a status message ("פונה ל-Gemini…" / ✓ / error).
+- **URL summarization**: paste a model-page URL → `extractUrls` detects it, the request enables the
+  Gemini `url_context` tool (drops `responseMimeType` then, since tools+structured-output conflict) and
+  the model reads+summarizes the page. Plain text and PDF upload still work.
+- **Gemini 3 models**: `src/ai/models.ts` shared list (gemini-3-flash / -flash-lite first, 2.x as
+  fallbacks); completion defaults to `gemini-3-flash`. Both AI selectors (learn + create) use it. (The
+  earlier "no Flash 3.1" note was wrong about the generation — Gemini 3 Flash exists; integrated.)
+- **Brand logos auto-embed** (`src/app/brandLogo.ts`, assets `logo-*.png` for peugeot/citroen/opel/mg/ds):
+  `loadBrandLogoDataUrl` (→ data URL so export can embed it) is preloaded per `spec.brand`;
+  `applyBrandLogos(doc, spec, logoSrc)` drops the logo into every detected `kind==='logo'` slot (matched by
+  `${slot.id}_b` or box overlap → covers both generate + structured paths), `fit:'contain'`.
+- **Image crop — manual + auto-detected**:
+  - IR `ImageBlockIR.crop {fx,fy,fw,fh}` now RENDERED (PageView wrapper clips; img scaled/offset to the
+    window) and EXPORTED (`drawImageBlock` crop branch: scale image so the window fills the box, clip rest).
+  - Manual control: image panel "חיתוך תמונה" with left/right/top/bottom inset sliders + reset.
+  - Auto-detect: `extractImages.walkPage` now tracks the active CLIP rect across save/restore; when a
+    source clip cuts an image to 5–92% of its full rect, the VISIBLE region becomes the block box and the
+    `crop` fraction is recorded — so images cropped in the original render the same in the editor/export.
+    Verified on real PDFs (5/53 images cropped — not over-triggering); gate `verify:images` extended.
+
 ## Feedback round 6 (drive-type templates · AI completion · zoom · image frame · preview · brand folders)
 - **Drive-type data templates** (`workbookAdapter.naturalTemplateSheets(drive, trims)`): engine + battery
   sheets tailored to `petrol|hybrid|phev|ev` (fields transcribed from the four real workbooks; `DRIVE_LABELS`,

@@ -3,10 +3,17 @@
 // about the model). OFF by default; needs a key + network. The structured numeric spec is NEVER
 // invented here — only marketing prose, equipment bullets, and legal text are completed.
 import type { SpecSheet } from '../data/specModel';
+import { GEMINI_COMPLETE_DEFAULT } from './models';
 
-// A capable-yet-free Flash model. (There is no "Flash 3.1"; gemini-2.5-flash is the smartest
-// free Flash for generative Hebrew copy, so we default to it for completion.)
-export const COMPLETE_DEFAULT_MODEL = 'gemini-2.5-flash';
+// A capable-yet-free Flash model. Defaults to the newest generation (Gemini 3 Flash); the user
+// can pick an older 2.x Flash from the model selector if their key lacks access.
+export const COMPLETE_DEFAULT_MODEL = GEMINI_COMPLETE_DEFAULT;
+
+/** Pull http(s) URLs out of the source so we can ask Gemini to read them (url_context tool). */
+export function extractUrls(s: string): string[] {
+  const m = s.match(/https?:\/\/[^\s)"'<>]+/gi) || [];
+  return [...new Set(m)].slice(0, 5);
+}
 
 export interface SheetCompletion {
   marketingText?: string;
@@ -24,7 +31,7 @@ function missingSummary(sheet: SpecSheet): string {
   return want.join('; ') || 'אין שדות חסרים מובהקים — שפר רק אם יש מידע ודאי במקור.';
 }
 
-function buildPrompt(sheet: SpecSheet, source: string): string {
+function buildPrompt(sheet: SpecSheet, source: string, urls: string[]): string {
   const existing = {
     brand: sheet.brand, model: sheet.model, trims: sheet.trims,
     sections: sheet.sections.map((s) => ({ title: s.title, rows: s.rows.map((r) => r.label) })),
@@ -34,24 +41,29 @@ function buildPrompt(sheet: SpecSheet, source: string): string {
   return [
     'אתה כותב תוכן שיווקי לקטלוג רכב בעברית (RTL). מטרתך: להשלים אך ורק את הטקסטים החסרים על סמך חומר המקור שסופק.',
     'חוקים: (1) אל תמציא נתונים מספריים, מחירים, או מפרט טכני — רק טקסט שיווקי/אבזור/משפטי. (2) כתוב עברית תקנית, תמציתית, בטון מותג. (3) השתמש רק במידע שמופיע או נרמז במקור; אם חסר מידע ודאי, השאר את השדה ריק.',
+    urls.length ? `קרא וסכם את תוכן העמודים בכתובות הבאות (השתמש בכלי url_context): ${urls.join(' , ')}` : '',
     `שדות למילוי (אם חסרים): ${missingSummary(sheet)}.`,
     'החזר JSON בלבד במבנה: {"marketingText":"...", "legalText":"...", "features":[{"title":"אבזור","items":["...", "..."]}]}. השמט שדות שאין לך עבורם תוכן ודאי.',
     'נתוני הגיליון הקיימים (אל תשכפל מה שכבר קיים):',
     JSON.stringify(existing),
     'חומר המקור (טקסט חופשי על הדגם):',
-    source.replace(/\s+/g, ' ').trim().slice(0, 12000),
-  ].join('\n');
+    source.replace(/\s+/g, ' ').trim().slice(0, 12000) || '(אין טקסט חופשי — הסתמך על הכתובות שלמעלה)',
+  ].filter(Boolean).join('\n');
 }
 
 /** Call Gemini once to complete the missing copy. Retries transient 429/503 with backoff. */
 export async function completeSheetWithGemini(
   sheet: SpecSheet, source: string, apiKey: string, model = COMPLETE_DEFAULT_MODEL,
 ): Promise<SheetCompletion> {
-  if (!source.trim()) throw new Error('אין חומר מקור. הדבק טקסט על הדגם או טען קובץ PDF.');
+  const urls = extractUrls(source);
+  if (!source.trim()) throw new Error('אין חומר מקור. הדבק טקסט/קישור על הדגם או טען קובץ PDF.');
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const body = {
-    contents: [{ role: 'user', parts: [{ text: buildPrompt(sheet, source) }] }],
-    generationConfig: { temperature: 0.4, responseMimeType: 'application/json' },
+  // With the url_context tool we DROP responseMimeType (structured-output + tools can conflict)
+  // and rely on the tolerant parser; without URLs we keep strict JSON output.
+  const body: Record<string, unknown> = {
+    contents: [{ role: 'user', parts: [{ text: buildPrompt(sheet, source, urls) }] }],
+    generationConfig: urls.length ? { temperature: 0.4 } : { temperature: 0.4, responseMimeType: 'application/json' },
+    ...(urls.length ? { tools: [{ url_context: {} }] } : {}),
   };
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   let lastErr = '';

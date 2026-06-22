@@ -175,6 +175,34 @@ export function generateCatalog(
   };
 }
 
+/** Place the brand logo into every detected "logo" slot of an already-generated catalog. Matches
+ * doc image blocks to spec logo slots by page index + box overlap, so it works for BOTH the plain
+ * generate path and the structured (mapSheetToCatalog) path. Mutates and returns the doc. */
+export function applyBrandLogos(doc: DocumentIR, spec: TemplateSpec, logoSrc?: string): DocumentIR {
+  if (!logoSrc) return doc;
+  const overlaps = (a: { x: number; y: number; width: number; height: number }, b: typeof a) => {
+    const ix = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+    const iy = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const inter = ix * iy; const ua = a.width * a.height;
+    return ua > 0 && inter / ua > 0.4;
+  };
+  spec.pages.forEach((tp, k) => {
+    const page = doc.pages[k];
+    if (!page) return;
+    const logoSlots = tp.slots.filter((s) => s.kind === 'logo' && !s.ignored);
+    for (const slot of logoSlots) {
+      // prefer an exact id match (generate path); else the best box overlap (structured path)
+      const block = page.blocks.find((b) => b.type === 'image' && b.id === `${slot.id}_b`)
+        || page.blocks.find((b) => b.type === 'image' && overlaps(slot.bbox, b));
+      if (block && block.type === 'image') {
+        const img = block as ImageBlockIR;
+        img.src = logoSrc; img.originalImageRef = logoSrc; img.fit = 'contain'; img.source = 'generated';
+      }
+    }
+  });
+  return doc;
+}
+
 /** All fillable (dynamic) slots, flattened for a binding form. */
 export function dynamicSlots(spec: TemplateSpec): { pageIndex: number; role: string; slot: SlotSpec }[] {
   const out: { pageIndex: number; role: string; slot: SlotSpec }[] = [];

@@ -5,7 +5,8 @@ import React from 'react';
 import type { DocumentIR } from '../types/catalog';
 import type { SlotSpec, TemplateSpec } from '../templates/templateSpec';
 import { listTemplates } from '../store/library';
-import { generateCatalog, validateCatalog, dynamicSlots, REQUIRED_KINDS, type BindingMap } from '../catalog/generateCatalog';
+import { generateCatalog, validateCatalog, dynamicSlots, applyBrandLogos, REQUIRED_KINDS, type BindingMap } from '../catalog/generateCatalog';
+import { loadBrandLogoDataUrl } from './brandLogo';
 import { autofitDocument, canvasMeasureFor, type Measure } from '../catalog/autofit';
 import { brandFont, ensureFontFace, FALLBACK_HEBREW } from './brandFont';
 import { parseSpreadsheetSheets, toCSV } from '../data/parseSheet';
@@ -19,6 +20,7 @@ import { ensureThumbnails } from './thumbnail';
 import { SpecSheetEditor } from './SpecSheetEditor';
 import { PageView } from './PageView';
 import { completeSheetWithGemini, applyCompletion, COMPLETE_DEFAULT_MODEL } from '../ai/geminiComplete';
+import { GEMINI_MODELS } from '../ai/models';
 import { getGeminiKey, setGeminiKey } from '../ai/settings';
 import { extractPdfText } from '../pdf/pdfText';
 
@@ -87,18 +89,20 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
   const [aiMsg, setAiMsg] = React.useState<string | null>(null);
   // live preview of the generated catalog (item E)
   const [preview, setPreview] = React.useState<DocumentIR | null>(null);
-  // the clear row-based editor is the primary view: start it with an empty sheet to fill
+  // brand logo (data URL) preloaded so generation can drop it into detected "logo" slots
+  const [logoData, setLogoData] = React.useState<string | undefined>(undefined);
+  React.useEffect(() => { loadBrandLogoDataUrl(spec?.brand).then(setLogoData).catch(() => setLogoData(undefined)); }, [spec?.brand]);
+  // On template (spec) change: reset bindings/data, then seed a starter sheet so the row-based
+  // editor is the primary view. (Single effect — a separate reset effect used to clobber the seed.)
   React.useEffect(() => {
-    if (spec && editData && !sheet) {
+    setBindings({}); setShowMissing(false); setIssues([]); setDataErr(null);
+    if (spec && editData) {
       const s = emptySheet(['גרסה 1', 'גרסה 2']);
       s.sections.push({ title: 'מנוע', rows: [{ label: '', values: ['', ''] }] });
       s.features.push({ title: 'בטיחות', items: [{ label: '', perTrim: [true, true] }] });
       setSheet(s); setDataName('הזנה ידנית');
-    }
+    } else { setSheet(null); setDataName(''); }
   }, [spec?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // reset bindings + data when the template changes
-  React.useEffect(() => { setBindings({}); setShowMissing(false); setSheet(null); setIssues([]); setDataErr(null); setDataName(''); }, [spec?.id]);
 
   // mapping report (which fields the sheet populates vs. what stays manual)
   const report = React.useMemo<{ mappings: FieldMapping[]; manual: FieldMapping[]; warnings: string[] } | null>(() => {
@@ -164,6 +168,8 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
     const doc = sheetHasData(sheet)
       ? mapSheetToCatalog(spec!, sheet!, { bindings, measure: plainMeasure(family), title: 'מפרט טכני' }).doc
       : generateCatalog(spec!, bindings);
+    // drop the brand logo into every detected "logo" slot (item: auto-embed brand logos)
+    applyBrandLogos(doc, spec!, logoData);
     // Milestone B: auto-fit text to its box before opening (shrink→wrap→grow→flag)
     autofitDocument(doc, canvasMeasureFor(family));
     // generated pages have no source raster → render real thumbnails so the rail isn't blank
@@ -184,13 +190,15 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
 
   // run AI completion of the missing copy from pasted/uploaded source material
   async function runAiComplete() {
-    if (!sheet) { setAiMsg('אין גיליון נתונים פעיל למילוי.'); return; }
     if (!aiKey.trim()) { setAiMsg('הזן מפתח Gemini (חינמי מ-aistudio.google.com).'); setAiOpen(true); return; }
-    setAiBusy(true); setAiMsg(null);
+    if (!aiSource.trim()) { setAiMsg('הדבק טקסט או קישור לעמוד הדגם (או טען PDF) לפני ההשלמה.'); return; }
+    // self-heal: if no sheet is loaded yet, seed an empty one so completion has a target
+    const base = sheet ?? emptySheet(['גרסה 1', 'גרסה 2']);
+    setAiBusy(true); setAiMsg('פונה ל-Gemini…');
     try {
       setGeminiKey(aiKey);
-      const c = await completeSheetWithGemini(sheet, aiSource, aiKey, aiModel);
-      const { sheet: merged, stats } = applyCompletion(sheet, c);
+      const c = await completeSheetWithGemini(base, aiSource, aiKey, aiModel);
+      const { sheet: merged, stats } = applyCompletion(base, c);
       setSheet(merged);
       const parts: string[] = [];
       if (stats.marketing) parts.push('טקסט שיווקי');
@@ -273,7 +281,7 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
             {aiOpen && (
               <div style={{ padding: 14, borderBottom: '1px solid var(--line)', background: 'rgba(232,120,30,.05)', display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
-                  ה-AI ישלים <b>רק טקסטים חסרים</b> (פסקת שיווק, שורות אבזור, טקסט משפטי) מתוך חומר המקור — לעולם לא נתונים מספריים. הדבק טקסט על הדגם או טען PDF.
+                  ה-AI ישלים <b>רק טקסטים חסרים</b> (פסקת שיווק, שורות אבזור, טקסט משפטי) מתוך חומר המקור — לעולם לא נתונים מספריים. הדבק טקסט, <b>הדבק קישור לעמוד הדגם</b> (יסוכם אוטומטית), או טען PDF.
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 12, fontWeight: 700 }}>מפתח Gemini:</span>
@@ -281,11 +289,11 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
                     style={{ flex: 1, minWidth: 200, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)', fontFamily: 'var(--mono)' }} />
                   <label style={{ fontSize: 12, fontWeight: 700 }}>מודל
                     <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} dir="ltr" style={{ marginInlineStart: 6, padding: 5, borderRadius: 8, border: '1px solid var(--line-2)' }}>
-                      {['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'].map((m) => <option key={m} value={m}>{m}</option>)}
+                      {GEMINI_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
                     </select>
                   </label>
                 </div>
-                <textarea value={aiSource} onChange={(e) => setAiSource(e.target.value)} dir="rtl" placeholder="הדבק כאן טקסט שמסביר על הדגם (סקירה, הודעה לעיתונות, דף מוצר)…"
+                <textarea value={aiSource} onChange={(e) => setAiSource(e.target.value)} dir="rtl" placeholder="הדבק טקסט על הדגם, או קישור (URL) לעמוד הדגם באתר היצרן/יבואן — ה-AI יקרא ויסכם אותו…"
                   style={{ width: '100%', minHeight: 90, padding: 8, borderRadius: 8, border: '1px solid var(--line-2)', fontFamily: 'var(--font)', resize: 'vertical' }} />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
@@ -295,7 +303,7 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
                   {aiSource && <button className="btn btn-ghost btn-sm" onClick={() => setAiSource('')}>נקה מקור</button>}
                   <div style={{ flex: 1 }} />
                   {aiMsg && <span style={{ fontSize: 12.5, color: aiMsg.startsWith('✓') ? 'var(--ok, #0a7d3b)' : aiMsg.startsWith('שגיאת') ? 'var(--danger)' : 'var(--ink-3)' }}>{aiMsg}</span>}
-                  <button className="btn btn-sm" onClick={runAiComplete} disabled={aiBusy || !sheet}
+                  <button className="btn btn-sm" onClick={runAiComplete} disabled={aiBusy}
                     style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', opacity: aiBusy ? 0.6 : 1 }}>
                     {aiBusy ? 'משלים…' : '✨ השלם את החסר'}
                   </button>
