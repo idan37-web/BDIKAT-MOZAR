@@ -238,7 +238,7 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
           {tpl.pages.map((p, i) => (
             <button key={i} onClick={() => { setCurPage(i); setSelSlot(null); setSelSlots(new Set()); }}
               style={{ display: 'block', width: '100%', marginBottom: 8, cursor: 'pointer', textAlign: 'start', border: i === curPage ? '2px solid var(--accent)' : '1px solid var(--line)', borderRadius: 6, overflow: 'hidden', background: '#fff' }}>
-              {docs[0]?.pages[p.index]?.previewImage && <img src={docs[0].pages[p.index].previewImage} alt="" style={{ width: '100%', display: 'block' }} />}
+              {docs[0]?.pages[p.index]?.previewImage && <img src={docs[0].pages[p.index].previewImage} alt="" className="ui-img" style={{ width: '100%', display: 'block' }} />}
               <div style={{ fontSize: 10, padding: '3px 5px', color: 'var(--ink-2)', display: 'flex', justifyContent: 'space-between' }}>
                 <span>{i + 1} · {ROLE_HE[p.role] || p.role}</span><span>{p.slots.length}</span>
               </div>
@@ -336,7 +336,7 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>דוגמה {sel.blockType === 'image' ? '(תמונה)' : ''}</div>
                   {sel.blockType === 'image'
-                    ? <img src={sel.sample} alt="" style={{ width: '100%', maxHeight: 120, objectFit: 'contain', background: 'var(--surface-3)', borderRadius: 8 }} />
+                    ? <img src={sel.sample} alt="" className="ui-img" style={{ width: '100%', maxHeight: 120, objectFit: 'contain', background: 'var(--surface-3)', borderRadius: 8 }} />
                     : <div dir="rtl" style={{ fontSize: 12, color: 'var(--ink-2)', whiteSpace: 'pre-wrap', maxHeight: 140, overflow: 'auto', background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: 8 }}>{sel.sample}</div>}
                 </div>
               )}

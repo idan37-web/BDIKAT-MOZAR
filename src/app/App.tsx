@@ -327,7 +327,7 @@ export function App() {
         {mode === 'editable' && <button className="btn btn-ghost btn-sm" onClick={selectAll} style={{ fontSize: 12 }}>בחר הכל</button>}
         <div className="seg" style={{ display: 'flex', alignItems: 'center' }} title="גודל תצוגת הקאנבס (לא משנה את גודל העמוד)">
           <button onClick={() => setZoom((z) => Math.max(0.25, Math.round((z - 0.1) * 100) / 100))} style={{ fontSize: 13, padding: '0 8px' }}>−</button>
-          <button onClick={() => setZoom(1)} style={{ fontSize: 11, minWidth: 46 }}>{Math.round(zoom * 100)}%</button>
+          <button onClick={() => setZoom(1)} style={{ fontSize: 11, minWidth: 46, fontVariantNumeric: 'tabular-nums' }} title="אפס זום ל-100%">{Math.round(zoom * 100)}%</button>
           <button onClick={() => setZoom((z) => Math.min(4, Math.round((z + 0.1) * 100) / 100))} style={{ fontSize: 13, padding: '0 8px' }}>+</button>
         </div>
         <button className="btn btn-ghost btn-sm" onClick={undo} disabled={!canUndo} title="בטל (Ctrl/⌘+Z)" style={{ fontSize: 14, opacity: canUndo ? 1 : 0.4 }}>↶</button>
@@ -360,7 +360,7 @@ export function App() {
           {doc.pages.map((p, i) => (
             <button key={p.id} onClick={() => { setCur(i); clearSel(); }}
               style={{ display: 'block', width: '100%', marginBottom: 8, cursor: 'pointer', border: i === cur ? '2px solid var(--accent)' : '1px solid var(--line)', borderRadius: 6, overflow: 'hidden', background: '#fff', aspectRatio: `${p.width}/${p.height}` }}>
-              {p.previewImage && <img src={p.previewImage} alt="" style={{ width: '100%', display: 'block' }} />}
+              {p.previewImage && <img src={p.previewImage} alt="" className="ui-img" style={{ width: '100%', display: 'block' }} />}
             </button>
           ))}
         </div>
@@ -444,7 +444,7 @@ export function App() {
           ) : selImage ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ fontWeight: 800 }}>תמונה</div>
-              <img src={selImage.src} alt="" style={{ width: '100%', maxHeight: 120, objectFit: 'contain', background: 'var(--surface-3)', borderRadius: 8 }} />
+              <img src={selImage.src} alt="" className="ui-img" style={{ width: '100%', maxHeight: 120, objectFit: 'contain', background: 'var(--surface-3)', borderRadius: 8 }} />
               <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', textAlign: 'center' }}>
                 החלף תמונה
                 <input type="file" accept="image/*" hidden onChange={(e) => {
@@ -664,7 +664,7 @@ export function App() {
                   <input type="number" value={Math.round(selBlock.height)} onChange={(e) => patchBlock(selBlock.id, { height: +e.target.value })} style={{ width: '100%', marginTop: 4, padding: 6, borderRadius: 8, border: '1px solid var(--line-2)' }} />
                 </label>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--mono)' }} dir="ltr">
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontVariantNumeric: 'tabular-nums' }} dir="ltr">
                 x{Math.round(selBlock.x)} y{Math.round(selBlock.y)} · {selBlock.direction} · {selBlock.dirty ? 'edited' : 'original'}
               </div>
               <div className="seg">

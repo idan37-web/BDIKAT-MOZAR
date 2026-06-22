@@ -438,7 +438,7 @@ function PreviewModal({ doc, family, onClose, onCreate }: { doc: DocumentIR; fam
       <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--surface)', borderRadius: 14, maxHeight: '92vh', width: 'min(96vw, 720px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,.4)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: '1px solid var(--line)' }}>
           <strong style={{ fontFamily: 'var(--display)' }}>תצוגה מקדימה</strong>
-          <span style={{ color: 'var(--ink-3)', fontSize: 13 }}>עמוד {i + 1} מתוך {doc.pages.length}</span>
+          <span style={{ color: 'var(--ink-3)', fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>עמוד {i + 1} מתוך {doc.pages.length}</span>
           <div style={{ flex: 1 }} />
           <button className="btn btn-ghost btn-sm" onClick={() => setI((v) => Math.max(0, v - 1))} disabled={i === 0}>‹ הקודם</button>
           <button className="btn btn-ghost btn-sm" onClick={() => setI((v) => Math.min(doc.pages.length - 1, v + 1))} disabled={i === doc.pages.length - 1}>הבא ›</button>
@@ -454,7 +454,7 @@ function PreviewModal({ doc, family, onClose, onCreate }: { doc: DocumentIR; fam
             {doc.pages.map((p, k) => (
               <button key={p.id} onClick={() => setI(k)} title={`עמוד ${k + 1}`}
                 style={{ flexShrink: 0, width: 52, aspectRatio: `${p.width}/${p.height}`, border: k === i ? '2px solid var(--accent)' : '1px solid var(--line)', borderRadius: 4, overflow: 'hidden', background: '#fff', cursor: 'pointer', padding: 0 }}>
-                {p.previewImage && <img src={p.previewImage} alt="" style={{ width: '100%', display: 'block' }} />}
+                {p.previewImage && <img src={p.previewImage} alt="" className="ui-img" style={{ width: '100%', display: 'block' }} />}
               </button>
             ))}
           </div>

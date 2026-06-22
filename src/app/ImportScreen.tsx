@@ -137,7 +137,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function BrandFolder({ brand, count, children }: { brand: string; count: number; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(true);
   return (
-    <div style={{ border: '1px solid var(--line)', borderRadius: 12, background: 'var(--surface)', overflow: 'hidden' }}>
+    <div style={{ border: '1px solid var(--line)', borderRadius: 16, background: 'var(--surface)', overflow: 'hidden' }}>
       <button onClick={() => setOpen((v) => !v)}
         style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', background: 'var(--surface-2)', border: 'none', borderBottom: open ? '1px solid var(--line)' : 'none' }}>
         <span style={{ fontSize: 14 }}>{open ? '📂' : '📁'}</span>
@@ -158,9 +158,9 @@ function Card({ thumb, title, sub, onOpen, openLabel, onDuplicate, onDelete }: {
   onDuplicate?: () => void; onDelete?: () => void;
 }) {
   return (
-    <div style={{ border: '1px solid var(--line)', borderRadius: 12, background: 'var(--surface)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+    <div className="lift-card" style={{ borderRadius: 12, background: 'var(--surface)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       <button onClick={onOpen} title={openLabel} style={{ cursor: 'pointer', border: 'none', padding: 0, background: 'var(--surface-2)', aspectRatio: '16/9', overflow: 'hidden' }}>
-        {thumb ? <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        {thumb ? <img src={thumb} alt="" className="ui-img" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
           : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-3)', fontSize: 12 }}>אין תצוגה</div>}
       </button>
       <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
