@@ -137,6 +137,7 @@ export async function importPdf(
   const n = sourcePdfName.toLowerCase();
   const brand = /peugeot|208|2008|3008|5008|rifter|boxer/.test(n) ? 'peugeot'
     : /citroen|citro|c3|c4|c5|berlingo|jumpy/.test(n) ? 'citroen'
+    : /opel|corsa|astra|mokka|grandland|crossland|combo|zafira|insignia|vivaro|frontera/.test(n) ? 'opel'
     : (/\bmg(s\d|[_\s-](hs|zs|ehs|phev)|\d)/i.test(n) || /\bmg\b/i.test(n)) ? 'mg' : 'unknown';
 
   return {

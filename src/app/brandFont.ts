@@ -6,6 +6,8 @@ import peugeotBold from '../assets/PeugeotNewHebrew-Bold.otf?url';
 import citroenRegular from '../assets/CitroenTypeHebrew-Regular.ttf?url';
 import citroenBold from '../assets/CitroenTypeHebrew-Bold.ttf?url';
 import almoniBold from '../assets/AlmoniNeue-Bold.otf?url';
+import opelRegular from '../assets/OpelNextHebrew-Regular.otf?url';
+import opelBold from '../assets/OpelNextHebrew-Bold.otf?url';
 
 export interface BrandFont {
   brand: string;
@@ -18,12 +20,14 @@ const PEUGEOT: BrandFont = { brand: 'peugeot', family: 'PeugeotNewHebrew', regul
 const CITROEN: BrandFont = { brand: 'citroen', family: 'CitroenTypeHebrew', regularUrl: citroenRegular, boldUrl: citroenBold };
 // MG supplied only Almoni Neue Bold (Hebrew+Latin); used for both weights until a regular arrives.
 const MG: BrandFont = { brand: 'mg', family: 'AlmoniNeue', regularUrl: almoniBold, boldUrl: almoniBold };
+const OPEL: BrandFont = { brand: 'opel', family: 'OpelNextHebrew', regularUrl: opelRegular, boldUrl: opelBold };
 
 /** Detect the brand from the source filename (extend per brand as fonts arrive). */
 export function detectBrand(name?: string): string {
   const n = (name || '').toLowerCase();
   if (/peugeot|208|2008|3008|5008|rifter|boxer/.test(n)) return 'peugeot';
   if (/citroen|citroën|c3|c4|c5|berlingo|jumpy/.test(n)) return 'citroen';
+  if (/opel|corsa|astra|mokka|grandland|crossland|combo|zafira|insignia|vivaro|frontera/.test(n)) return 'opel';
   if (/\bmg(s\d|[_\s-](hs|zs|ehs|phev)|\d)/i.test(n) || /\bmg\b/i.test(n)) return 'mg';
   return 'unknown';
 }
@@ -32,6 +36,7 @@ export function brandFont(brand: string): BrandFont | null {
   if (brand === 'peugeot') return PEUGEOT;
   if (brand === 'citroen') return CITROEN;
   if (brand === 'mg') return MG;
+  if (brand === 'opel') return OPEL;
   return null; // other brands fall back to a Hebrew system stack until a font is supplied
 }
 
