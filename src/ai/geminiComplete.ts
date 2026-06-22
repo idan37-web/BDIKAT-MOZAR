@@ -20,6 +20,17 @@ export interface SheetCompletion {
   legalText?: string;
   /** Suggested equipment bullets, grouped by category title (added as included on all trims). */
   features?: { title: string; items: string[] }[];
+  /** Copy written for specific empty TEXT regions of the catalog (cover/feature pages), by slot key. */
+  slotFills?: { key: string; text: string }[];
+}
+
+/** An empty marketing/heading region of the template the AI should write copy for. */
+export interface CopySlot {
+  key: string;
+  kind: string;       // marketing-text | heading | model-name | text
+  page: number;       // page index (lower = earlier; the "first pages")
+  sample?: string;    // the learned placeholder, for tone/length reference
+  maxChars: number;   // rough budget so the copy fits the box
 }
 
 /** What is currently missing — drives both the prompt and the "apply only if empty" merge. */
@@ -31,7 +42,7 @@ function missingSummary(sheet: SpecSheet): string {
   return want.join('; ') || 'אין שדות חסרים מובהקים — שפר רק אם יש מידע ודאי במקור.';
 }
 
-function buildPrompt(sheet: SpecSheet, source: string, urls: string[]): string {
+function buildPrompt(sheet: SpecSheet, source: string, urls: string[], slots: CopySlot[]): string {
   const existing = {
     brand: sheet.brand, model: sheet.model, trims: sheet.trims,
     sections: sheet.sections.map((s) => ({ title: s.title, rows: s.rows.map((r) => r.label) })),
@@ -39,11 +50,15 @@ function buildPrompt(sheet: SpecSheet, source: string, urls: string[]): string {
     hasMarketing: !!sheet.marketingText?.trim(), hasLegal: !!sheet.legalText?.trim(),
   };
   return [
-    'אתה כותב תוכן שיווקי לקטלוג רכב בעברית (RTL). מטרתך: להשלים אך ורק את הטקסטים החסרים על סמך חומר המקור שסופק.',
-    'חוקים: (1) אל תמציא נתונים מספריים, מחירים, או מפרט טכני — רק טקסט שיווקי/אבזור/משפטי. (2) כתוב עברית תקנית, תמציתית, בטון מותג. (3) השתמש רק במידע שמופיע או נרמז במקור; אם חסר מידע ודאי, השאר את השדה ריק.',
+    'אתה כותב תוכן שיווקי לקטלוג רכב בעברית (RTL). מטרתך: להשלים את כל הטקסטים השיווקיים החסרים על סמך חומר המקור שסופק.',
+    'חוקים: (1) אל תמציא נתונים מספריים, מחירים, או מפרט טכני — רק טקסט שיווקי/אבזור/משפטי. (2) כתוב עברית תקנית, שיווקית וזורמת, בטון מותג. (3) השתמש רק במידע שמופיע או נרמז במקור.',
     urls.length ? `קרא וסכם את תוכן העמודים בכתובות הבאות (השתמש בכלי url_context): ${urls.join(' , ')}` : '',
-    `שדות למילוי (אם חסרים): ${missingSummary(sheet)}.`,
-    'החזר JSON בלבד במבנה: {"marketingText":"...", "legalText":"...", "features":[{"title":"אבזור","items":["...", "..."]}]}. השמט שדות שאין לך עבורם תוכן ודאי.',
+    `שדות גיליון למילוי (אם חסרים): ${missingSummary(sheet)}.`,
+    slots.length
+      ? 'בנוסף — כתוב טקסט שיווקי לכל אחד מאזורי הטקסט הריקים של עמודי הקטלוג הראשונים (slots). לכל slot כתוב טקסט מתאים לסוג (kind) ובאורך שמתאים ל-maxChars (כותרות = קצרות; marketing-text = פסקה שיווקית). החזר אותם תחת slotFills לפי ה-key המדויק. אל תמציא key חדש. מלא כמה שיותר מהם.'
+      : '',
+    slots.length ? `אזורי הטקסט הריקים (slots): ${JSON.stringify(slots)}` : '',
+    'החזר JSON בלבד במבנה: {"marketingText":"...", "legalText":"...", "features":[{"title":"אבזור","items":["..."]}], "slotFills":[{"key":"...","text":"..."}]}. השמט שדות שאין לך עבורם תוכן ודאי.',
     'נתוני הגיליון הקיימים (אל תשכפל מה שכבר קיים):',
     JSON.stringify(existing),
     'חומר המקור (טקסט חופשי על הדגם):',
@@ -51,18 +66,23 @@ function buildPrompt(sheet: SpecSheet, source: string, urls: string[]): string {
   ].filter(Boolean).join('\n');
 }
 
-/** Call Gemini once to complete the missing copy. Retries transient 429/503 with backoff. */
+/** Call Gemini once to complete the missing copy. Retries transient 429/503 with backoff.
+ * `slots` = the empty marketing/heading regions of the first catalog pages to write copy for. */
 export async function completeSheetWithGemini(
-  sheet: SpecSheet, source: string, apiKey: string, model = COMPLETE_DEFAULT_MODEL,
+  sheet: SpecSheet, source: string, apiKey: string, model = COMPLETE_DEFAULT_MODEL, slots: CopySlot[] = [],
 ): Promise<SheetCompletion> {
   const urls = extractUrls(source);
   if (!source.trim()) throw new Error('אין חומר מקור. הדבק טקסט/קישור על הדגם או טען קובץ PDF.');
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
   // With the url_context tool we DROP responseMimeType (structured-output + tools can conflict)
-  // and rely on the tolerant parser; without URLs we keep strict JSON output.
+  // and rely on the tolerant parser; without URLs we keep strict JSON output. More tokens are
+  // needed when writing copy for many slots, so lift the output cap.
   const body: Record<string, unknown> = {
-    contents: [{ role: 'user', parts: [{ text: buildPrompt(sheet, source, urls) }] }],
-    generationConfig: urls.length ? { temperature: 0.4 } : { temperature: 0.4, responseMimeType: 'application/json' },
+    contents: [{ role: 'user', parts: [{ text: buildPrompt(sheet, source, urls, slots) }] }],
+    generationConfig: {
+      temperature: 0.5, maxOutputTokens: 4096,
+      ...(urls.length ? {} : { responseMimeType: 'application/json' }),
+    },
     ...(urls.length ? { tools: [{ url_context: {} }] } : {}),
   };
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -104,6 +124,11 @@ export function parseCompletion(text: string): SheetCompletion {
       .filter((f: any) => f && typeof f.title === 'string' && Array.isArray(f.items))
       .map((f: any) => ({ title: String(f.title).trim(), items: f.items.map((x: any) => String(x).trim()).filter(Boolean) }))
       .filter((f: { items: string[] }) => f.items.length);
+  }
+  if (Array.isArray(obj?.slotFills)) {
+    out.slotFills = obj.slotFills
+      .filter((s: any) => s && typeof s.key === 'string' && typeof s.text === 'string' && s.text.trim())
+      .map((s: any) => ({ key: String(s.key), text: String(s.text).trim() }));
   }
   return out;
 }

@@ -194,14 +194,45 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
     if (!aiSource.trim()) { setAiMsg('הדבק טקסט או קישור לעמוד הדגם (או טען PDF) לפני ההשלמה.'); return; }
     // self-heal: if no sheet is loaded yet, seed an empty one so completion has a target
     const base = sheet ?? emptySheet(['גרסה 1', 'גרסה 2']);
+    // collect the EMPTY marketing/heading text regions of the first catalog pages, so the AI
+    // writes copy for ALL of them (not just the single sheet marketingText field).
+    const COPY_KINDS = new Set(['marketing-text', 'heading', 'model-name', 'text']);
+    const copySlots = spec
+      ? dynamicSlots(spec)
+          .filter((d) => d.slot.blockType === 'text' && COPY_KINDS.has(d.slot.kind))
+          .filter((d) => !(bindings[d.slot.key]?.text && bindings[d.slot.key]!.text!.trim()))
+          .sort((a, b) => a.pageIndex - b.pageIndex)
+          .slice(0, 16)
+          .map((d) => {
+            const fs = d.slot.style?.fontSize || 12;
+            const cap = Math.round((d.slot.bbox.width * d.slot.bbox.height) / (fs * fs) * 1.5);
+            return { key: d.slot.key, kind: d.slot.kind, page: d.pageIndex, sample: (d.slot.sample || '').slice(0, 160), maxChars: Math.max(20, Math.min(600, cap)) };
+          })
+      : [];
     setAiBusy(true); setAiMsg('פונה ל-Gemini…');
     try {
       setGeminiKey(aiKey);
-      const c = await completeSheetWithGemini(base, aiSource, aiKey, aiModel);
+      const c = await completeSheetWithGemini(base, aiSource, aiKey, aiModel, copySlots);
       const { sheet: merged, stats } = applyCompletion(base, c);
       setSheet(merged);
+      // apply per-slot copy into the bindings (only for slots still empty)
+      let slotsFilled = 0;
+      if (c.slotFills?.length) {
+        const valid = new Set(copySlots.map((s) => s.key));
+        setBindings((b) => {
+          const next = { ...b };
+          for (const f of c.slotFills!) {
+            if (!valid.has(f.key)) continue;
+            if (next[f.key]?.text && next[f.key]!.text!.trim()) continue;
+            next[f.key] = { ...next[f.key], key: f.key, text: f.text };
+            slotsFilled++;
+          }
+          return next;
+        });
+      }
       const parts: string[] = [];
-      if (stats.marketing) parts.push('טקסט שיווקי');
+      if (slotsFilled) parts.push(`${slotsFilled} אזורי טקסט בעמודים`);
+      if (stats.marketing) parts.push('טקסט שיווקי (גיליון)');
       if (stats.legal) parts.push('טקסט משפטי');
       if (stats.featureItems) parts.push(`${stats.featureItems} שורות אבזור`);
       setAiMsg(parts.length ? `✓ הושלמו: ${parts.join(', ')}.` : 'ה-AI לא מצא תוכן ודאי להוסיף (אולי הכל כבר מלא).');

@@ -31,12 +31,12 @@
   --side-ink2: #7e848f;
   --side-line: #31343c;
 
-  /* accent — indicator amber (the one signal colour; spend boldness here) */
-  --accent:      #e24a14;
-  --accent-2:    #c43c0d;
-  --accent-ink:  #a8330d;
-  --accent-soft: #fbe7de;
-  --accent-line: #f3c6b4;
+  /* accent — petrol teal (the one signal colour; calm + distinctive, easy on the eye) */
+  --accent:      #1a767b;
+  --accent-2:    #135c61;
+  --accent-ink:  #0f5256;
+  --accent-soft: #e3f1f1;
+  --accent-line: #bcdedf;
 
   /* semantic */
   --eco:   oklch(0.58 0.12 168);
@@ -98,7 +98,7 @@ body {
 body::before {
   content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background:
-    radial-gradient(60% 50% at 88% -8%, rgba(226,74,20,.06), transparent 60%),
+    radial-gradient(60% 50% at 88% -8%, rgba(26,118,123,.07), transparent 60%),
     linear-gradient(rgba(22,24,29,.035) 1px, transparent 1px) 0 0 / 100% 28px,
     linear-gradient(90deg, rgba(22,24,29,.035) 1px, transparent 1px) 0 0 / 28px 100%,
     linear-gradient(rgba(22,24,29,.05) 1px, transparent 1px) 0 0 / 100% 140px,

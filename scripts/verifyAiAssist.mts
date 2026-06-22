@@ -49,10 +49,11 @@ expect('invalid role ignored', bad.spec.pages.find((p) => p.index === target.ind
 expect('invalid kind ignored', badSlot.kind === slot.kind);
 
 // 5) catalog-creation AI COMPLETION: parse + merge-only-missing logic (item B)
-const comp = parseCompletion('```json\n{"marketingText":"רכב משפחתי מרווח.","legalText":"ט.ל.ח","features":[{"title":"בטיחות","items":["7 כריות אוויר","ABS"]}],"price":"999999"}\n```');
+const comp = parseCompletion('```json\n{"marketingText":"רכב משפחתי מרווח.","legalText":"ט.ל.ח","features":[{"title":"בטיחות","items":["7 כריות אוויר","ABS"]}],"slotFills":[{"key":"p0_s3","text":"חוויית נהיגה חדשה."},{"key":"bad","text":""}],"price":"999999"}\n```');
 expect('completion parse strips fences', comp.marketingText === 'רכב משפחתי מרווח.');
 expect('completion ignores non-text fields (no price leakage)', !('price' in (comp as any)) || (comp as any).price === undefined);
 expect('completion features parsed', comp.features?.[0].items.length === 2);
+expect('completion slotFills parsed (empty text dropped)', comp.slotFills?.length === 1 && comp.slotFills[0].key === 'p0_s3');
 
 const base = emptySheet(['GT', 'ALLURE']);
 base.features.push({ title: 'בטיחות', items: [{ label: 'ABS', perTrim: [true, true] }] });

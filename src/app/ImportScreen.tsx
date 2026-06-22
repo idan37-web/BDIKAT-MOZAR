@@ -4,6 +4,7 @@ import React from 'react';
 import type { DocumentIR } from '../types/catalog';
 import type { TemplateSpec } from '../templates/templateSpec';
 import { importPdf } from '../pdf/importPdf';
+import { brandLogoUrl } from './brandLogo';
 import {
   listTemplates, listProjects, duplicateTemplate, deleteTemplate, deleteProject,
   type StoredTemplate, type StoredProject,
@@ -46,42 +47,30 @@ export function ImportScreen({ onImported, onLearnTemplate, onGenerate, onOpenPr
   return (
     <div style={{ height: '100vh', overflowY: 'auto' }}>
     <div style={{ maxWidth: 940, margin: '0 auto', padding: '34px 24px 64px' }}>
-      {/* top bar: wordmark + secondary routes */}
-      <div className="rise rise-1" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 30 }}>
-        <span className="display" style={{ fontSize: 18, letterSpacing: '-.01em' }}>AutoSpec<span style={{ color: 'var(--accent)' }}>.</span></span>
-        <span style={{ width: 1, height: 16, background: 'var(--line-2)' }} />
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--ink-3)', letterSpacing: '.04em' }}>סטודיו קטלוגי רכב</span>
-        <div style={{ flex: 1 }} />
+      {/* top bar: secondary routes only (the name is the centred hero below) */}
+      <div className="rise rise-1" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, justifyContent: 'flex-start' }}>
         {onGenerate && <button className="btn btn-ghost btn-sm" onClick={onGenerate}>צור קטלוג ←</button>}
         {onLearnTemplate && <button className="btn btn-ghost btn-sm" onClick={onLearnTemplate}>למידת תבנית ←</button>}
       </div>
 
-      {/* hero — the thesis: from spec data to a print-ready Hebrew catalog */}
-      <div className="rise rise-2" style={{ marginBottom: 8 }}><span className="eyebrow">ייבוא · חילוץ · עריכה · ייצוא</span></div>
-      <h1 className="display rise rise-2" style={{ fontSize: 'clamp(34px, 5vw, 56px)', maxWidth: 16 + 'ch', marginBottom: 16 }}>
-        מהמפרט<span style={{ color: 'var(--accent)' }}> ל‑PDF</span> מוכן לדפוס.
-      </h1>
-      <p className="rise rise-3" style={{ color: 'var(--ink-2)', fontSize: 16.5, maxWidth: 560, marginBottom: 22 }}>
-        טענו PDF קיים או נתונים מובנים. המערכת מחלצת טקסט אמיתי בר‑בחירה, בונה עמודים, ומייצאת PDF וקטורי בעברית — בלי לרסטר את העמוד.
-      </p>
-
-      {/* instrument-cluster readout — real figures */}
-      <div className="rise rise-3" style={{ display: 'flex', gap: 28, marginBottom: 26, flexWrap: 'wrap' }}>
-        {([['פרויקטים', projects.length], ['תבניות', templates.length], ['מותגים', 5]] as const).map(([label, n]) => (
-          <div key={label}>
-            <div className="readout" style={{ fontSize: 26, color: 'var(--ink)', lineHeight: 1 }}>{String(n).padStart(2, '0')}</div>
-            <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', letterSpacing: '.1em', marginTop: 4 }}>{label}</div>
-          </div>
-        ))}
+      {/* hero — the name, large and centred */}
+      <div className="rise rise-2" style={{ textAlign: 'center', marginBottom: 24 }}>
+        <h1 className="display" style={{ fontSize: 'clamp(52px, 9vw, 104px)', letterSpacing: '-.03em', lineHeight: 1 }}>
+          AutoSpec<span style={{ color: 'var(--accent)' }}>.</span>
+        </h1>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 13, color: 'var(--ink-3)', letterSpacing: '.08em', marginTop: 14 }}>
+          סטודיו קטלוגי רכב · עברית RTL
+        </div>
       </div>
 
       {/* intake bay — the signature: a registration-framed drop target */}
-      <div className="bay rise rise-4"
+      <div className="bay rise rise-3"
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
         onClick={() => inputRef.current?.click()}
         style={{
+          maxWidth: 620, marginInline: 'auto',
           minHeight: 220, borderRadius: 16, cursor: 'pointer',
           border: `1.5px ${over ? 'solid' : 'dashed'} ${over ? 'var(--accent)' : 'var(--line-2)'}`,
           background: over ? 'var(--accent-soft)' : 'var(--surface)',
@@ -100,7 +89,7 @@ export function ImportScreen({ onImported, onLearnTemplate, onGenerate, onOpenPr
         <input ref={inputRef} type="file" accept="application/pdf" hidden
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, maxWidth: 620, marginInline: 'auto' }}>
         <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', letterSpacing: '.06em' }}>PDF</span>
         <div className="dim-rule" style={{ flex: 1, margin: 0 }} />
         <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', letterSpacing: '.06em' }}>עברית · RTL</span>
@@ -173,12 +162,17 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function BrandFolder({ brand, count, children }: { brand: string; count: number; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(true);
   const initial = brandLabel(brand).replace(/[^A-Za-z֐-׿]/g, '').slice(0, 2) || '#';
+  const logo = brandLogoUrl(brand);
   return (
     <div className="lift-card" style={{ borderRadius: 14, background: 'var(--surface)', overflow: 'hidden' }}>
       <button onClick={() => setOpen((v) => !v)}
         style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 11, padding: '11px 14px', cursor: 'pointer', background: 'transparent', border: 'none', borderBottom: open ? '1px solid var(--line)' : 'none' }}>
-        {/* marque tile — a graphite bezel with the brand initials */}
-        <span style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--side)', color: '#fff', display: 'grid', placeItems: 'center', fontFamily: 'var(--mono)', fontWeight: 600, fontSize: 12, flexShrink: 0 }}>{initial}</span>
+        {/* marque tile — the real brand logo on a clean chip, else a graphite initials bezel */}
+        {logo
+          ? <span style={{ width: 32, height: 32, borderRadius: 8, background: '#fff', border: '1px solid var(--line)', display: 'grid', placeItems: 'center', padding: 5, flexShrink: 0 }}>
+              <img src={logo} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }} />
+            </span>
+          : <span style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--side)', color: '#fff', display: 'grid', placeItems: 'center', fontFamily: 'var(--mono)', fontWeight: 600, fontSize: 12, flexShrink: 0 }}>{initial}</span>}
         <span className="display" style={{ fontSize: 14.5 }}>{brandLabel(brand)}</span>
         <span className="readout" style={{ fontSize: 12, color: 'var(--ink-3)' }}>{String(count).padStart(2, '0')}</span>
         <div style={{ flex: 1 }} />
