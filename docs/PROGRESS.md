@@ -204,6 +204,9 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
 - Inputs: `project/uploads/{PEUGEOT,CITROEN}/PRIVATE/*.pdf`, `src/assets/PeugeotNewHebrew-*.otf`.
 
 ## Brand fonts
+**MG**: Almoni Neue Bold (`src/assets/AlmoniNeue-Bold.otf`) — renders Hebrew + Latin + digits; only a BOLD
+weight was supplied so it's used for both weights (add a regular if one arrives). MG is auto-detected by
+filename (`detectBrand`/`importPdf`). Pixel-confirmed: MG_HS_PHEV exports in AlmoniTzar-Bold.
 Peugeot OTF + **Citroën TTF (CitroenTypeHebrew Regular/Bold, +Light/Medium/ExtraLight)** are embedded
 (`src/assets`, wired in `src/app/brandFont.ts`): applied in the editor and embedded on export per brand.
 Pixel-confirmed: C5 Aircross exports in CitroenTypeHebrew-Bold. Other brands still fall back to a Hebrew

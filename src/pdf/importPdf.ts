@@ -136,7 +136,8 @@ export async function importPdf(
   // (helper hoisted below)
   const n = sourcePdfName.toLowerCase();
   const brand = /peugeot|208|2008|3008|5008|rifter|boxer/.test(n) ? 'peugeot'
-    : /citroen|citro|c3|c4|c5|berlingo|jumpy/.test(n) ? 'citroen' : 'unknown';
+    : /citroen|citro|c3|c4|c5|berlingo|jumpy/.test(n) ? 'citroen'
+    : (/\bmg(s\d|[_\s-](hs|zs|ehs|phev)|\d)/i.test(n) || /\bmg\b/i.test(n)) ? 'mg' : 'unknown';
 
   return {
     id: `doc_${Date.now()}`,
