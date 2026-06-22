@@ -45,32 +45,65 @@ export function ImportScreen({ onImported, onLearnTemplate, onGenerate, onOpenPr
 
   return (
     <div style={{ height: '100vh', overflowY: 'auto' }}>
-    <div style={{ maxWidth: 720, margin: '40px auto', padding: '0 24px 60px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <h1 style={{ fontFamily: 'var(--display)', fontSize: 26, fontWeight: 800 }}>ייבוא מפרט PDF</h1>
+    <div style={{ maxWidth: 940, margin: '0 auto', padding: '34px 24px 64px' }}>
+      {/* top bar: wordmark + secondary routes */}
+      <div className="rise rise-1" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 30 }}>
+        <span className="display" style={{ fontSize: 18, letterSpacing: '-.01em' }}>AutoSpec<span style={{ color: 'var(--accent)' }}>.</span></span>
+        <span style={{ width: 1, height: 16, background: 'var(--line-2)' }} />
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--ink-3)', letterSpacing: '.04em' }}>סטודיו קטלוגי רכב</span>
         <div style={{ flex: 1 }} />
         {onGenerate && <button className="btn btn-ghost btn-sm" onClick={onGenerate}>צור קטלוג ←</button>}
         {onLearnTemplate && <button className="btn btn-ghost btn-sm" onClick={onLearnTemplate}>למידת תבנית ←</button>}
       </div>
-      <p style={{ color: 'var(--ink-2)', marginTop: 4 }}>גרור קובץ PDF אמיתי — המערכת מחלצת ממנו טקסט אמיתי (בר-בחירה) ומבנה עמודים.</p>
 
-      <div
+      {/* hero — the thesis: from spec data to a print-ready Hebrew catalog */}
+      <div className="rise rise-2" style={{ marginBottom: 8 }}><span className="eyebrow">ייבוא · חילוץ · עריכה · ייצוא</span></div>
+      <h1 className="display rise rise-2" style={{ fontSize: 'clamp(34px, 5vw, 56px)', maxWidth: 16 + 'ch', marginBottom: 16 }}>
+        מהמפרט<span style={{ color: 'var(--accent)' }}> ל‑PDF</span> מוכן לדפוס.
+      </h1>
+      <p className="rise rise-3" style={{ color: 'var(--ink-2)', fontSize: 16.5, maxWidth: 560, marginBottom: 22 }}>
+        טענו PDF קיים או נתונים מובנים. המערכת מחלצת טקסט אמיתי בר‑בחירה, בונה עמודים, ומייצאת PDF וקטורי בעברית — בלי לרסטר את העמוד.
+      </p>
+
+      {/* instrument-cluster readout — real figures */}
+      <div className="rise rise-3" style={{ display: 'flex', gap: 28, marginBottom: 26, flexWrap: 'wrap' }}>
+        {([['פרויקטים', projects.length], ['תבניות', templates.length], ['מותגים', 5]] as const).map(([label, n]) => (
+          <div key={label}>
+            <div className="readout" style={{ fontSize: 26, color: 'var(--ink)', lineHeight: 1 }}>{String(n).padStart(2, '0')}</div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', letterSpacing: '.1em', marginTop: 4 }}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* intake bay — the signature: a registration-framed drop target */}
+      <div className="bay rise rise-4"
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
         onClick={() => inputRef.current?.click()}
         style={{
-          marginTop: 22, minHeight: 260, borderRadius: 16, cursor: 'pointer',
-          border: `2px dashed ${over ? 'var(--accent)' : 'var(--line-2)'}`,
+          minHeight: 220, borderRadius: 16, cursor: 'pointer',
+          border: `1.5px ${over ? 'solid' : 'dashed'} ${over ? 'var(--accent)' : 'var(--line-2)'}`,
           background: over ? 'var(--accent-soft)' : 'var(--surface)',
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14,
+          boxShadow: over ? 'none' : 'var(--shadow-card)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10,
+          transition: 'border-color .14s ease-out, background .14s ease-out, box-shadow .14s ease-out',
         }}
       >
-        <div style={{ fontWeight: 800, fontSize: 18 }}>{busy ? 'מייבא…' : 'גרור PDF לכאן'}</div>
-        <div style={{ color: 'var(--ink-3)' }}>{busy ? 'מחלץ טקסט ומרנדר עמודים' : 'או לחץ לבחירת קובץ'}</div>
-        {err && <div style={{ color: 'var(--danger)', fontSize: 13 }}>{err}</div>}
+        {busy
+          ? <><span className="spinner" style={{ borderColor: 'var(--accent-soft)', borderTopColor: 'var(--accent)' }} />
+              <div className="display" style={{ fontSize: 20 }}>מייבא…</div>
+              <div style={{ color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 12 }}>מחלץ טקסט ומרנדר עמודים</div></>
+          : <><div className="display" style={{ fontSize: 22 }}>גררו PDF לכאן</div>
+              <div style={{ color: 'var(--ink-3)' }}>או לחצו לבחירת קובץ מהמחשב</div></>}
+        {err && <div style={{ color: 'var(--danger)', fontSize: 13, marginTop: 4 }}>{err}</div>}
         <input ref={inputRef} type="file" accept="application/pdf" hidden
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', letterSpacing: '.06em' }}>PDF</span>
+        <div className="dim-rule" style={{ flex: 1, margin: 0 }} />
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', letterSpacing: '.06em' }}>עברית · RTL</span>
       </div>
 
       {/* Milestone C: library — saved templates + in-progress projects, FOLDERED BY BRAND */}
@@ -126,9 +159,12 @@ function groupByBrand<T>(items: T[], getBrand: (t: T) => string | undefined): [s
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginTop: 30 }}>
-      <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 10 }}>{title}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
+    <div style={{ marginTop: 44 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+        <span className="display" style={{ fontSize: 17 }}>{title}</span>
+        <div className="dim-rule" style={{ flex: 1, margin: 0 }} />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>{children}</div>
     </div>
   );
 }
@@ -136,15 +172,17 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 /** A collapsible per-brand folder holding its cards in a responsive grid. */
 function BrandFolder({ brand, count, children }: { brand: string; count: number; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(true);
+  const initial = brandLabel(brand).replace(/[^A-Za-z֐-׿]/g, '').slice(0, 2) || '#';
   return (
-    <div style={{ border: '1px solid var(--line)', borderRadius: 16, background: 'var(--surface)', overflow: 'hidden' }}>
+    <div className="lift-card" style={{ borderRadius: 14, background: 'var(--surface)', overflow: 'hidden' }}>
       <button onClick={() => setOpen((v) => !v)}
-        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', background: 'var(--surface-2)', border: 'none', borderBottom: open ? '1px solid var(--line)' : 'none' }}>
-        <span style={{ fontSize: 14 }}>{open ? '📂' : '📁'}</span>
-        <span style={{ fontWeight: 800, fontSize: 14 }}>{brandLabel(brand)}</span>
-        <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>({count})</span>
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 11, padding: '11px 14px', cursor: 'pointer', background: 'transparent', border: 'none', borderBottom: open ? '1px solid var(--line)' : 'none' }}>
+        {/* marque tile — a graphite bezel with the brand initials */}
+        <span style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--side)', color: '#fff', display: 'grid', placeItems: 'center', fontFamily: 'var(--mono)', fontWeight: 600, fontSize: 12, flexShrink: 0 }}>{initial}</span>
+        <span className="display" style={{ fontSize: 14.5 }}>{brandLabel(brand)}</span>
+        <span className="readout" style={{ fontSize: 12, color: 'var(--ink-3)' }}>{String(count).padStart(2, '0')}</span>
         <div style={{ flex: 1 }} />
-        <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>{open ? '▾' : '◂'}</span>
+        <span style={{ color: 'var(--ink-3)', fontSize: 11, transition: 'rotate .16s ease-out', rotate: open ? '0deg' : '-90deg' }}>▼</span>
       </button>
       {open && (
         <div style={{ padding: 12, display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>{children}</div>
@@ -163,9 +201,9 @@ function Card({ thumb, title, sub, onOpen, openLabel, onDuplicate, onDelete }: {
         {thumb ? <img src={thumb} alt="" className="ui-img" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
           : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-3)', fontSize: 12 }}>אין תצוגה</div>}
       </button>
-      <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={title}>{title}</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{sub}</div>
+      <div style={{ padding: '10px 11px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+        <div className="display" style={{ fontWeight: 700, fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={title}>{title}</div>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-3)', letterSpacing: '.02em' }}>{sub}</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
           <button className="btn btn-sm" onClick={onOpen} style={{ flex: 1, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '5px 8px', fontSize: 12 }}>{openLabel}</button>
           {onDuplicate && <button className="btn btn-ghost btn-sm" onClick={onDuplicate} title="שכפל" style={{ fontSize: 12 }}>שכפל</button>}
