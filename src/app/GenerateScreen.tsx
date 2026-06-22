@@ -10,7 +10,7 @@ import { autofitDocument, canvasMeasureFor, type Measure } from '../catalog/auto
 import { brandFont, ensureFontFace, FALLBACK_HEBREW } from './brandFont';
 import { parseSpreadsheetSheets, toCSV } from '../data/parseSheet';
 import { sheetToCells, blankTemplateCells, type SheetIssue } from '../data/specSheetFormat';
-import { parseToSpecSheet, naturalTemplateSheets } from '../data/workbookAdapter';
+import { parseToSpecSheet, naturalTemplateSheets, DRIVE_LABELS, type DriveType } from '../data/workbookAdapter';
 import { writeXlsx } from '../data/writeXlsx';
 import { sheetStats, emptySheet, type SpecSheet } from '../data/specModel';
 import { mapSheetToCatalog, type FieldMapping } from '../data/mapSheetToCatalog';
@@ -73,6 +73,7 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
   const [dataErr, setDataErr] = React.useState<string | null>(null);
   const [dataName, setDataName] = React.useState<string>('');
   const [editData, setEditData] = React.useState(true);
+  const [drive, setDrive] = React.useState<DriveType>('phev');
   // the clear row-based editor is the primary view: start it with an empty sheet to fill
   React.useEffect(() => {
     if (spec && editData && !sheet) {
@@ -201,7 +202,10 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
                 if (!sheet) { const s = emptySheet(['גרסה 1']); s.sections.push({ title: 'מנוע', rows: [{ label: '', values: [''] }] }); s.features.push({ title: 'בטיחות', items: [{ label: '', perTrim: [true] }] }); setSheet(s); setDataName('הזנה ידנית'); }
                 setEditData((v) => !v);
               }}>{editData ? 'סגור עריכה' : '✎ הזנה/עריכה ידנית'}</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => downloadXlsx('autospec-template.xlsx', writeXlsx(naturalTemplateSheets()))} title="תבנית רב-גיליונות בפורמט שלך">הורד תבנית (Excel)</button>
+              <select className="btn btn-ghost btn-sm" value={drive} onChange={(e) => setDrive(e.target.value as DriveType)} title="סוג הנעה לתבנית" style={{ padding: '6px 8px' }}>
+                {(Object.keys(DRIVE_LABELS) as DriveType[]).map((d) => <option key={d} value={d}>{DRIVE_LABELS[d]}</option>)}
+              </select>
+              <button className="btn btn-ghost btn-sm" onClick={() => downloadXlsx(`autospec-template-${drive}.xlsx`, writeXlsx(naturalTemplateSheets(drive)))} title="תבנית רב-גיליונות מותאמת לסוג ההנעה">הורד תבנית (Excel)</button>
               <button className="btn btn-ghost btn-sm" onClick={() => downloadCsv('autospec-template.csv', blankTemplateCells())} title="פורמט מתויג חלופי">CSV</button>
               {sheet && <button className="btn btn-ghost btn-sm" onClick={() => downloadCsv(`${sheet.model || 'spec'}.csv`, sheetToCells(sheet))}>הורד כ-CSV</button>}
             </div>

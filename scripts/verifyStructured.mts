@@ -148,7 +148,7 @@ expect('template separates exterior/interior colours', tmpl.colors.some((c) => c
   const { naturalTemplateSheets } = await import('../src/data/workbookAdapter');
   const { writeXlsx } = await import('../src/data/writeXlsx');
   const { parseXlsxSheets } = await import('../src/data/parseSheet');
-  const tplXlsx = writeXlsx(naturalTemplateSheets(['GT', 'ALLURE']));
+  const tplXlsx = writeXlsx(naturalTemplateSheets('phev', ['GT', 'ALLURE']));
   expect('writeXlsx produces a PK zip', tplXlsx[0] === 0x50 && tplXlsx[1] === 0x4b);
   const tplSheets = await parseXlsxSheets(tplXlsx);
   expect('template xlsx keeps the 5 category tabs', tplSheets.length === 5 && tplSheets[0].name === 'יחידת הנעה');

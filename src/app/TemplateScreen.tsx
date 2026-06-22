@@ -12,8 +12,17 @@ import { saveTemplate } from '../store/library';
 import { blockScreenRect } from '../editor/coords';
 import { classifyWithGemini, applyAiToSpec } from '../ai/geminiClassify';
 import { getGeminiKey, setGeminiKey, getGeminiModel, setGeminiModel } from '../ai/settings';
+import { naturalTemplateSheets, DRIVE_LABELS, type DriveType } from '../data/workbookAdapter';
+import { writeXlsx } from '../data/writeXlsx';
 
 const AI_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+
+function downloadXlsxFile(name: string, bytes: Uint8Array) {
+  const blob = new Blob([bytes as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 
 const SLOT_KINDS: SlotKind[] = [
   'model-name', 'heading', 'marketing-text', 'hero-image', 'image',
@@ -33,6 +42,7 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
   const [err, setErr] = React.useState<string | null>(null);
   const [docs, setDocs] = React.useState<DocumentIR[]>([]);
   const [tpl, setTpl] = React.useState<TemplateSpec | null>(null);
+  const [drive, setDrive] = React.useState<DriveType>('phev');
   const [curPage, setCurPage] = React.useState(0);
   const [selSlot, setSelSlot] = React.useState<string | null>(null);
   const [selSlots, setSelSlots] = React.useState<Set<string>>(() => new Set());
@@ -189,6 +199,10 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
         <div style={{ flex: 1 }} />
         <button className="btn btn-ghost btn-sm" onClick={refineWithAi} disabled={aiBusy} title="סיווג עמודים/סלוטים בעזרת Gemini (אופציונלי)">{aiBusy ? 'AI…' : '✨ שפר עם AI'}</button>
         <button className="btn btn-ghost btn-sm" onClick={() => setAiOpen((v) => !v)} title="הגדרות AI">⚙</button>
+        <select className="btn btn-ghost btn-sm" value={drive} onChange={(e) => setDrive(e.target.value as DriveType)} title="סוג הנעה לתבנית הנתונים" style={{ padding: '6px 8px' }}>
+          {(Object.keys(DRIVE_LABELS) as DriveType[]).map((d) => <option key={d} value={d}>{DRIVE_LABELS[d]}</option>)}
+        </select>
+        <button className="btn btn-ghost btn-sm" onClick={() => downloadXlsxFile(`autospec-data-${drive}.xlsx`, writeXlsx(naturalTemplateSheets(drive)))} title="הורד תבנית טבלת נתונים (Excel) מותאמת לסוג ההנעה">הורד טבלת נתונים</button>
         <button className="btn btn-ghost btn-sm" onClick={() => downloadTemplate(tpl)}>הורד JSON</button>
         <button className="btn btn-sm" onClick={doSave} style={{ background: saved ? 'var(--ok, #0a7d3b)' : 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px' }}>
           {saved ? '✓ נשמר' : 'שמור תבנית'}

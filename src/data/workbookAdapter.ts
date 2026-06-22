@@ -78,19 +78,35 @@ export function workbookToSheet(sheets: NamedSheet[]): { sheet: SpecSheet; issue
   return { sheet: normalizeSheet(sheet), issues };
 }
 
-/** A downloadable template in the user's NATURAL multi-sheet format (one tab per category),
- * pre-filled with the field labels; the user fills the value columns per trim. */
-export function naturalTemplateSheets(trims: string[] = ['גרסה 1', 'גרסה 2']): NamedSheet[] {
+export type DriveType = 'petrol' | 'hybrid' | 'phev' | 'ev';
+export const DRIVE_LABELS: Record<DriveType, string> = {
+  petrol: 'בנזין', hybrid: 'היברידי', phev: 'היברידי נטען (PHEV)', ev: 'חשמלי',
+};
+
+// Drive-unit fields per drive type (transcribed from the user's four real templates).
+const ENGINE: Record<DriveType, string[]> = {
+  petrol: ['מנוע', 'נפח מנוע (סמ״ק)', 'מספר בוכנות', 'מספר שסתומים', 'הספק מירבי (כ״ס)', 'הספק מירבי (סל״ד)', 'מומנט מירבי (קג״מ)', '0-100 (שניות)', 'מהירות מירבית (קמ״ש)', 'תיבת הילוכים', 'צריכת דלק משולבת'],
+  hybrid: ['מנוע', 'נפח מנוע (סמ״ק)', 'מספר בוכנות', 'הספק מירבי (כ״ס) - בנזין', 'הספק מירבי (סל״ד) - בנזין', 'הספק מירבי (כ״ס) - חשמלי', 'הספק מירבי (סל״ד) - חשמלי', '0-100 (שניות)', 'מהירות מירבית (קמ״ש)', 'תיבת הילוכים', 'צריכת דלק משולבת'],
+  phev: ['מנוע', 'נפח מנוע (סמ״ק)', 'מספר בוכנות', 'הספק מירבי משולב (כ״ס)', 'מומנט מירבי משולב (קג״מ)', 'הספק מירבי (כ״ס) - בנזין', 'מומנט מירבי (קג״מ) - בנזין', 'הספק מירבי (כ״ס) - חשמלי', 'מומנט מירבי (קג״מ) - חשמלי', 'טווח נסיעה חשמלי מרבי (ק״מ)', '0-100 (שניות)', 'מהירות מירבית (קמ״ש)', 'תיבת הילוכים', 'צריכת דלק משוקללת'],
+  ev: ['מנוע', 'הספק מירבי (כ״ס)', 'הספק מירבי (סל״ד)', '0-100 (שניות)', 'מהירות מירבית (קמ״ש)', 'תיבת הילוכים', 'צריכת חשמל לפי תקן WLTP', 'טווח נסיעה לפי תקן WLTP'],
+};
+const HAS_BATTERY: Record<DriveType, boolean> = { petrol: false, hybrid: true, phev: true, ev: true };
+const DIMS = ['אורך כללי (ס״מ)', 'רוחב כללי (ס״מ)', 'גובה (ס״מ)', 'מרחק בין סרנים (ס״מ)', 'מתלים מלפנים', 'מתלים מאחור', 'משקל עצמי (ק״ג)', 'משקל כללי מורשה (ק״ג)', 'נגרר ללא בלמים (ק״ג)', 'נגרר עם בלמים (ק״ג)', 'צמיגים', 'תא מטען (ל׳)'];
+
+/** A downloadable template in the user's NATURAL multi-sheet format, tailored to a DRIVE TYPE
+ * (the engine + battery sheets differ; dimensions / safety / equipment are shared). */
+export function naturalTemplateSheets(drive: DriveType = 'phev', trims: string[] = ['גרסה 1', 'גרסה 2']): NamedSheet[] {
   const hdr = ['', ...trims];
   const vx = ['', ...trims.map(() => 'V/X')];
   const spec = (rows: string[]) => [hdr, ...rows.map((r) => [r, ...trims.map(() => '')])];
-  return [
-    { name: 'יחידת הנעה', cells: spec(['מנוע', 'נפח מנוע (סמ״ק)', 'מספר בוכנות', 'הספק מירבי משולב (כ״ס)', 'הספק מירבי (כ״ס) - בנזין', 'מומנט מירבי (קג״מ) - בנזין', 'הספק מירבי (כ״ס) - חשמלי', 'מומנט מירבי (קג״מ) - חשמלי', '0-100 (שניות)', 'מהירות מירבית (קמ״ש)', 'טווח נסיעה חשמלי מרבי (ק״מ)', 'תיבת הילוכים', 'צריכת דלק משוקללת']) },
-    { name: 'מידות ומשקלים', cells: spec(['אורך כללי (ס״מ)', 'רוחב כללי (ס״מ)', 'גובה (ס״מ)', 'מרחק בין סרנים (ס״מ)', 'מתלים מלפנים', 'מתלים מאחור', 'משקל עצמי (ק״ג)', 'משקל כללי מורשה (ק״ג)', 'נגרר ללא בלמים (ק״ג)', 'נגרר עם בלמים (ק״ג)', 'צמיגים', 'תא מטען (ל׳)']) },
-    { name: 'סוללה וטעינה', cells: spec(['סוללה (KWh)', 'סוג סוללה', 'הספק טעינה (kW)']) },
-    { name: 'בטיחות', cells: [vx, ['7 כריות אוויר', '', ''], ['ESP – בקרת יציבות', '', ''], ['ABS', '', ''], ['בלימת חירום אקטיבית', '', ''], ['# הוסיפו שורות נוספות לפי הצורך', '', '']] },
-    { name: 'אבזור', cells: [vx, ['פנסים ראשיים LED', '', ''], ['מסך מולטימדיה', '', ''], ['בקרת אקלים', '', ''], ['# הוסיפו שורות נוספות לפי הצורך', '', '']] },
+  const sheets: NamedSheet[] = [
+    { name: 'יחידת הנעה', cells: spec(ENGINE[drive]) },
+    { name: 'מידות ומשקלים', cells: spec(DIMS) },
   ];
+  if (HAS_BATTERY[drive]) sheets.push({ name: 'סוללה וטעינה', cells: spec(['סוללה (KWh)', 'סוג סוללה', 'מתח (וולט)', 'הספק טעינה AC (kW)', 'הספק טעינה DC (kW)']) });
+  sheets.push({ name: 'בטיחות', cells: [vx, ['7 כריות אוויר', '', ''], ['ESP – בקרת יציבות', '', ''], ['ABS', '', ''], ['בלימת חירום אקטיבית', '', ''], ['בקרת שיוט אדפטיבית', '', ''], ['# הוסיפו שורות לפי הצורך', '', '']] });
+  sheets.push({ name: 'אבזור', cells: [vx, ['פנסים ראשיים LED', '', ''], ['מסך מולטימדיה', '', ''], ['בקרת אקלים', '', ''], ['חיישני חניה', '', ''], ['מצלמת רוורס', '', ''], ['# הוסיפו שורות לפי הצורך', '', '']] });
+  return sheets;
 }
 
 /** Decide tagged vs natural and produce a SpecSheet either way. */
