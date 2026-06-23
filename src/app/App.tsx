@@ -624,7 +624,7 @@ export function App() {
               {/* weight + alignment */}
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => patchBlock(selBlock.id, { fontWeight: selBlock.fontWeight >= 700 ? 400 : 700 })}
-                  className={selBlock.fontWeight >= 700 ? 'on' : ''}
+                  className={selBlock.fontWeight >= 700 ? 'on' : ''} title="הדגשה (מודגש/רגיל)"
                   style={{ width: 44, fontWeight: 800, border: '1px solid var(--line-2)', borderRadius: 8, background: selBlock.fontWeight >= 700 ? 'var(--accent-soft)' : 'var(--surface)', color: selBlock.fontWeight >= 700 ? 'var(--accent-ink)' : 'var(--ink)' }}>B</button>
                 <div className="seg" style={{ flex: 1 }}>
                   {(['start', 'center', 'end'] as const).map((a) => (
@@ -648,8 +648,12 @@ export function App() {
                       style={{ width: 24, height: 24, borderRadius: 6, background: c, cursor: 'pointer', border: selBlock.color.toLowerCase() === c ? '2px solid var(--accent)' : '1px solid var(--line-2)' }} />
                   ))}
                   <input type="color" value={/^#[0-9a-f]{6}$/i.test(selBlock.color) ? selBlock.color : '#111418'}
-                    onChange={(e) => patchBlock(selBlock.id, { color: e.target.value })}
+                    onChange={(e) => patchBlock(selBlock.id, { color: e.target.value })} title="דוגם צבעים"
                     style={{ width: 28, height: 28, padding: 0, border: '1px solid var(--line-2)', borderRadius: 6, cursor: 'pointer', background: 'none' }} />
+                  <input type="text" defaultValue={selBlock.color} key={selBlock.id + selBlock.color} dir="ltr"
+                    onChange={(e) => { const v = e.target.value.trim().replace(/^#?/, '#'); if (/^#[0-9a-f]{6}$/i.test(v)) patchBlock(selBlock.id, { color: v }); }}
+                    placeholder="#rrggbb" title="קוד צבע מדויק (HEX)"
+                    style={{ width: 86, fontFamily: 'var(--mono)', fontSize: 12, padding: '5px 7px', border: '1px solid var(--line-2)', borderRadius: 6 }} />
                 </div>
               </div>
               {/* line height */}

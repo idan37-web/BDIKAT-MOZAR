@@ -23,15 +23,15 @@ function dirOf(item: PdfTextItem): TextBlockIR['direction'] {
 /**
  * @param textContent  result of page.getTextContent()
  * @param pageHeight   page height in PDF points (for origin flip)
- * @param resolveFontName  maps a pdf.js loadedName (e.g. "g_d0_f3") to the REAL font name
- *   (e.g. "PeugeotNewHebrew-Bold") via page.commonObjs — needed because the item's own
- *   `fontName` is an internal key that never reveals weight.
+ * @param resolveFont  maps a pdf.js loadedName (e.g. "g_d0_f3") to the REAL font's
+ *   { name, bold } via page.commonObjs — needed because the item's own `fontName` is an
+ *   internal key that never reveals weight, and the parsed font carries a reliable bold flag.
  */
 export function extractTextBlocks(
   textContent: PdfTextContent,
   pageHeight: number,
   pageId: string,
-  resolveFontName?: (loadedName?: string) => string | undefined,
+  resolveFont?: (loadedName?: string) => { name?: string; bold?: boolean } | undefined,
 ): TextBlockIR[] {
   const blocks: TextBlockIR[] = [];
   let z = 1;
@@ -47,8 +47,11 @@ export function extractTextBlocks(
     const ascent = it.height || size;
     const top = pageHeight - t[5] - ascent;
 
-    const realName = resolveFontName?.(it.fontName) || it.fontName;
-    const weight = /bold|black|heavy|semibold|\bbd\b/i.test(realName || '') ? 700 : 400;
+    const info = resolveFont?.(it.fontName);
+    const realName = info?.name || it.fontName;
+    // bold from the parsed font's own flag (most reliable) OR a broad weight-word/number in the name
+    const nameBold = /bold|black|heavy|semibold|demibold|extrabold|\bbd\b|\bblk\b|\bw[7-9]\b|[6-9]00/i.test(realName || '');
+    const weight = info?.bold || nameBold ? 700 : 400;
 
     blocks.push({
       id: `${pageId}_t${i}`,

@@ -2,7 +2,7 @@
 // The imported IR — never IMPORT3008/IMPORTC3 — is the source of truth after upload.
 import type { BBox, DocumentIR, PageIR, ImageBlockIR, ShapeBlockIR } from '../types/catalog';
 import { extractTextBlocks } from './extractLayout';
-import { renderPageCanvas, cropCanvasErasingText, cropGraphic } from './renderPage';
+import { renderPageCanvas, cropCanvasErasingText, cropGraphic, sampleInkColor } from './renderPage';
 import { walkPage, resolveImage, type ShapeOp, type MakeCanvas } from './extractImages';
 
 let workerConfigured = false;
@@ -50,12 +50,14 @@ export async function importPdf(
     // can resolve each item's REAL font name (→ correct bold detection).
     const { images: imageOps, shapes: shapeOps, graphics: graphicOps } = await walkPage(page, (pdfjs as any).OPS, vp.height, vp.width);
 
-    const resolveFontName = (loadedName?: string): string | undefined => {
+    const resolveFont = (loadedName?: string): { name?: string; bold?: boolean } | undefined => {
       if (!loadedName) return undefined;
-      try { return (page.commonObjs.get(loadedName) as { name?: string } | undefined)?.name; }
-      catch { return undefined; }
+      try {
+        const o = page.commonObjs.get(loadedName) as { name?: string; bold?: boolean; black?: boolean } | undefined;
+        return o ? { name: o.name, bold: !!(o.bold || o.black) } : undefined;
+      } catch { return undefined; }
     };
-    const textBlocks = extractTextBlocks(tc, vp.height, id, resolveFontName);
+    const textBlocks = extractTextBlocks(tc, vp.height, id, resolveFont);
     // text sits in paint order ABOVE images (captions over photos)
     textBlocks.forEach((b, i) => { b.zIndex = 1_000_000 + i; });
 
@@ -78,6 +80,22 @@ export async function importPdf(
       if (browser) {
         try { rendered = await renderPageCanvas(page, opts.previewScale ?? 2); previewImage = rendered.dataUrl; }
         catch (e) { console.warn('[import] preview render failed', e); }
+      }
+      // recover each text run's REAL colour by sampling its glyph pixels from the page raster
+      // (getTextContent has no colour; this fixes coloured / white-on-dark headings).
+      if (rendered) {
+        const overlaps = (t: { x: number; y: number; width: number; height: number }, b: typeof t) =>
+          !(t.x > b.x + b.width || t.x + t.width < b.x || t.y > b.y + b.height || t.y + t.height < b.y);
+        const lum = (hex: string) => { const m = /^#(..)(..)(..)$/.exec(hex); if (!m) return 0; const [r, g, bl] = [1, 2, 3].map((k) => parseInt(m[k], 16)); return (0.299 * r + 0.587 * g + 0.114 * bl) / 255; };
+        for (const b of textBlocks) {
+          if (b.deleted) continue;
+          const col = sampleInkColor(rendered.canvas, rendered.scale, b);
+          if (!col) continue;
+          // a near-white colour only makes sense over a captured dark backdrop (shape/image); else
+          // it would render invisible on the page — keep the default in that case.
+          if (lum(col) > 0.82 && !shapeBlocks.some((s) => overlaps(b, s)) && !imageOps.some((im) => overlaps(b, im.bbox))) continue;
+          b.color = col;
+        }
       }
       for (let i = 0; i < imageOps.length; i++) {
         const op = imageOps[i];

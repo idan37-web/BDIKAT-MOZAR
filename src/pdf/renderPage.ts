@@ -22,6 +22,58 @@ export async function renderPageCanvas(page: PdfPageLike, scale = 2): Promise<Re
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.85), canvas, scale };
 }
 
+/**
+ * Sample the INK colour of a text run from the rendered page raster. `getTextContent` carries no
+ * colour, so we read the glyph pixels: background = the region's border average; ink = the average
+ * of pixels far from that background. Returns a "#rrggbb" only when the ink is a CONFIDENT single
+ * colour (enough ink pixels + low variance) — otherwise null, so noisy text-over-photo keeps the
+ * default. bbox is in PDF points, top-left origin.
+ */
+export function sampleInkColor(
+  canvas: HTMLCanvasElement, scale: number, bbox: { x: number; y: number; width: number; height: number },
+): string | null {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const sx = Math.max(0, Math.floor(bbox.x * scale));
+  const sy = Math.max(0, Math.floor(bbox.y * scale));
+  const sw = Math.min(canvas.width - sx, Math.ceil(bbox.width * scale));
+  const sh = Math.min(canvas.height - sy, Math.ceil(bbox.height * scale));
+  if (sw < 3 || sh < 3) return null;
+  let img: ImageData;
+  try { img = ctx.getImageData(sx, sy, sw, sh); } catch { return null; }
+  const d = img.data;
+  // background = average of the region's border pixels
+  let R = 0, G = 0, B = 0, bn = 0;
+  const addB = (x: number, y: number) => { const i = (y * sw + x) * 4; R += d[i]; G += d[i + 1]; B += d[i + 2]; bn++; };
+  for (let x = 0; x < sw; x++) { addB(x, 0); addB(x, sh - 1); }
+  for (let y = 1; y < sh - 1; y++) { addB(0, y); addB(sw - 1, y); }
+  const bg = [R / bn, G / bn, B / bn];
+  const FAR = 55 * 55 * 3;
+  // ink = pixels far from bg
+  let ir = 0, ig = 0, ib = 0, k = 0;
+  const n = sw * sh;
+  for (let p = 0; p < n; p++) {
+    const i = p * 4;
+    const dr = d[i] - bg[0], dg = d[i + 1] - bg[1], db = d[i + 2] - bg[2];
+    if (dr * dr + dg * dg + db * db > FAR) { ir += d[i]; ig += d[i + 1]; ib += d[i + 2]; k++; }
+  }
+  if (k < n * 0.02) return null; // too little ink to be sure
+  const ink = [ir / k, ig / k, ib / k];
+  // variance of ink pixels around the mean — high = mixed colours (over a photo) → unreliable
+  let v = 0;
+  for (let p = 0; p < n; p++) {
+    const i = p * 4;
+    const dr = d[i] - bg[0], dg = d[i + 1] - bg[1], db = d[i + 2] - bg[2];
+    if (dr * dr + dg * dg + db * db > FAR) {
+      const er = d[i] - ink[0], eg = d[i + 1] - ink[1], eb = d[i + 2] - ink[2];
+      v += er * er + eg * eg + eb * eb;
+    }
+  }
+  if (v / k > 70 * 70 * 3) return null;
+  const hex = '#' + ink.map((c) => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, '0')).join('');
+  return hex;
+}
+
 /** Crop a region (in PDF points, top-left origin) out of the rendered canvas → data URL. */
 export function cropCanvas(canvas: HTMLCanvasElement, scale: number, x: number, y: number, w: number, h: number): string {
   const sx = Math.max(0, Math.round(x * scale));
