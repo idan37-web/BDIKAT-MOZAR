@@ -2,7 +2,7 @@
 // so before opening/exporting we MEASURE each text block against its box and, in order:
 // shrink the font to a floor → wrap → grow the box within page bounds → else flag.
 // RTL is preserved (wrapping is on words in logical order; visual order is applied later).
-import type { DocumentIR, TextBlockIR } from '../types/catalog';
+import type { DocumentIR, TextBlockIR, TableBlockIR } from '../types/catalog';
 import { isTextBlock } from '../types/catalog';
 
 /** Width of `text` at `fontSize`, in the SAME units as the box (PDF points). */
@@ -105,4 +105,40 @@ export function canvasMeasureFor(fontFamily: string): (b: TextBlockIR) => Measur
     ctx.font = `${b.fontWeight || 400} ${fontSize}px ${fontFamily}`;
     return ctx.measureText(text).width;
   };
+}
+
+/** Measure cell text at a weight — used to fit a table's font so no cell clips. */
+export type CellMeasure = (text: string, fontSize: number, bold: boolean) => number;
+
+/**
+ * Shrink a table's font (and grow row height for it) so EVERY cell shows its full text without
+ * clipping — measuring each cell against its own column width. Alignment is unchanged (the render
+ * keeps labels at the start, values centred). Mutates the table. Returns true if it changed.
+ */
+export function fitTableBlock(t: TableBlockIR, measure: CellMeasure, padding = 6): boolean {
+  let scale = 1;
+  for (const row of t.rows) {
+    if (row.kind === 'section') {
+      const w = measure(row.cells[0] || '', t.fontSize, true);
+      const avail = t.width - padding * 2;
+      if (w > avail && avail > 0) scale = Math.min(scale, avail / w);
+      continue;
+    }
+    const bold = row.kind === 'header';
+    for (let c = 0; c < t.columns; c++) {
+      const txt = row.cells[c] || '';
+      if (!txt) continue;
+      const colW = (t.colFractions[c] || 0) * t.width - padding * 2;
+      if (colW <= 0) continue;
+      const w = measure(txt, t.fontSize, bold);
+      if (w > colW) scale = Math.min(scale, colW / w);
+    }
+  }
+  const newFont = scale < 1 ? Math.max(5, Math.round(t.fontSize * scale * 10) / 10) : t.fontSize;
+  const newRow = Math.max(t.rowHeight, Math.ceil(newFont * 1.5));
+  const changed = newFont !== t.fontSize || newRow !== t.rowHeight;
+  t.fontSize = newFont;
+  t.rowHeight = newRow;
+  t.height = t.rows.length * t.rowHeight;
+  return changed;
 }

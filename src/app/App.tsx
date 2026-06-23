@@ -9,6 +9,7 @@ import { GenerateScreen } from './GenerateScreen';
 import { PageView, type ViewMode, type CellRef } from './PageView';
 import { LayersPanel } from './LayersPanel';
 import { brandFont, ensureFontFace, FALLBACK_HEBREW, loadExportFonts } from './brandFont';
+import { fitTextBlock, fitTableBlock, canvasMeasureFor } from '../catalog/autofit';
 import { exportPdf } from '../pdf/exportPdf';
 import { saveProject } from '../store/library';
 import { removeBackground } from './imageBg';
@@ -62,6 +63,7 @@ export function App() {
   const [cur, setCur] = React.useState(0);
   const [mode, setMode] = React.useState<ViewMode>('editable');
   const [zoom, setZoom] = React.useState(1); // canvas zoom, independent of page rail
+  const [bgTolerance, setBgTolerance] = React.useState(40); // background-removal sensitivity
   const [sel, setSel] = React.useState<string | null>(null);
   const [multi, setMulti] = React.useState<Set<string>>(() => new Set());
   const [editing, setEditing] = React.useState<string | null>(null);
@@ -307,10 +309,45 @@ export function App() {
   };
   const selTextCount = page.blocks.filter((b) => multi.has(b.id) && b.type === 'text' && !b.deleted).length;
 
-  // one-click background removal on the selected image
+  // one-click background removal on the selected image (tolerance from the panel slider)
   const removeBg = async () => {
     if (!selImage) return;
-    try { const out = await removeBackground(selImage.src); patchBlock(selImage.id, { src: out }); } catch { /* ignore */ }
+    // always run from the ORIGINAL so re-adjusting the slider re-runs cleanly (not on an already-cut image)
+    try { const out = await removeBackground(selImage.originalImageRef || selImage.src, bgTolerance); patchBlock(selImage.id, { src: out }); } catch { /* ignore */ }
+  };
+
+  // "Fit text": make every text box on the page show its FULL text (shrink→wrap→grow, no clip),
+  // and shrink each table's font so no cell clips — keeping table alignment intact.
+  const fitPageText = () => {
+    const measureFor = canvasMeasureFor(brandFamily);
+    const cv = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+    const ctx = cv?.getContext('2d') || null;
+    const cellMeasure = (text: string, size: number, bold: boolean) => {
+      if (!ctx) return text.length * size * 0.5;
+      ctx.font = `${bold ? 700 : 400} ${size}px ${brandFamily}`;
+      return ctx.measureText(text).width;
+    };
+    setDoc((d) => !d ? d : {
+      ...d,
+      pages: d.pages.map((p, i) => i !== cur ? p : {
+        ...p,
+        blocks: p.blocks.map((b) => {
+          if (b.deleted) return b;
+          if (b.type === 'text') {
+            const tb = b as TextBlockIR;
+            const r = fitTextBlock(tb, measureFor(tb), p.height, 0.55);
+            return { ...tb, fontSize: r.fontSize, height: r.height, dirty: true };
+          }
+          if (b.type === 'table') {
+            const t = structuredClone(b as TableBlockIR);
+            fitTableBlock(t, cellMeasure);
+            t.dirty = true;
+            return t;
+          }
+          return b;
+        }),
+      }),
+    });
   };
 
   return (
@@ -325,6 +362,7 @@ export function App() {
         </div>
         {mode === 'editable' && <button className={showLayers ? 'btn btn-sm on' : 'btn btn-ghost btn-sm'} onClick={() => setShowLayers((v) => !v)} style={{ fontSize: 12 }}>שכבות</button>}
         {mode === 'editable' && <button className="btn btn-ghost btn-sm" onClick={selectAll} style={{ fontSize: 12 }}>בחר הכל</button>}
+        {mode === 'editable' && <button className="btn btn-ghost btn-sm" onClick={fitPageText} style={{ fontSize: 12 }} title="ודא שכל הטקסטים והטבלאות בעמוד מוצגים במלואם, בלי חיתוך">התאם טקסט</button>}
         <div className="seg" style={{ display: 'flex', alignItems: 'center' }} title="גודל תצוגת הקאנבס (לא משנה את גודל העמוד)">
           <button onClick={() => setZoom((z) => Math.max(0.25, Math.round((z - 0.1) * 100) / 100))} style={{ fontSize: 13, padding: '0 8px' }}>−</button>
           <button onClick={() => setZoom(1)} style={{ fontSize: 11, minWidth: 46, fontVariantNumeric: 'tabular-nums' }} title="אפס זום ל-100%">{Math.round(zoom * 100)}%</button>
@@ -545,7 +583,16 @@ export function App() {
                   );
                 })()}
               </div>
-              <button className="btn btn-ghost btn-sm" onClick={removeBg}>הסר רקע (שקיפות)</button>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700 }}>רגישות הסרת רקע: {bgTolerance}
+                  <input type="range" min={12} max={90} value={bgTolerance} onChange={(e) => setBgTolerance(+e.target.value)} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                </label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={removeBg}>הסר רקע</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => patchBlock(selImage.id, { src: selImage.originalImageRef || selImage.src })} title="החזר את התמונה המקורית">בטל</button>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>נשאר רקע? הגדל רגישות. נחתכו אזורים מהאובייקט? הקטן רגישות, ולחץ שוב.</div>
+              </div>
               <div className="seg">
                 <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>
                 <button onClick={() => changeZ('back')} style={{ flex: 1, fontSize: 12 }}>⤓ לאחור</button>

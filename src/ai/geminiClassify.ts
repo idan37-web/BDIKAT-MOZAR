@@ -41,6 +41,7 @@ function buildPrompt(spec: TemplateSpec): string {
     `תפקידי עמוד אפשריים: ${ROLES.join(', ')}.`,
     `סוגי סלוט אפשריים: ${KINDS.join(', ')}.`,
     'הנחיות: "spec" = עמוד מפרט טכני (נתונים מספריים). "safety"/"equipment" = רשימות אבזור/בטיחות (משפטים). "colors"/"colors-interior" = צבעי חוץ/פנים. "spec-table" לאזורי טבלת מפרט, "equipment" לפריט אבזור, "legal" לטקסט משפטי, "logo" ללוגו מותג. ערכי מפרט/אבזור/צבעים הם דינמיים; תוויות-עמודה, טקסט מותג ומשפטי הם קבועים.',
+    'חוק חשוב לפי סדר העמודים: כל העמודים שלפני עמודי טבלאות הנתונים/האבזור (העמודים הראשונים — שער ושיווק) מכילים אך ורק: background (תמונת רקע), hero-image (תמונת שער/נושא), heading (כותרת), model-name (שם דגם), marketing-text (טקסט שיווקי), logo, ולעיתים legal (טקסט משפטי) בתחתית העמוד בלבד. לעולם אל תסווג spec-table / equipment / safety / colors / wheels / pollution / price בעמודים הראשונים — סוגים אלה קיימים רק בתוך/מתחת לטבלאות.',
     'החזר JSON בלבד במבנה: {"pages":[{"index":n,"role":"...","slots":[{"id":"...","kind":"...","dynamic":true|false}]}]}. השתמש אך ורק בערכים מהרשימות. אל תמציא id-ים — השתמש ב-id שניתנו.',
     'נתוני התבנית:',
     JSON.stringify({ brand: spec.brand, format: spec.format, pages }),
@@ -114,5 +115,24 @@ export function applyAiToSpec(spec: TemplateSpec, ai: AiResult): { spec: Templat
     }
     if (touched) pagesChanged++;
   }
+  constrainEarlyPages(next);
   return { spec: next, stats: { pagesChanged, slotsChanged } };
+}
+
+/** Guard: on the pages BEFORE the first data/table page, force any text slot the model put into a
+ * table-only kind (spec-table/equipment/safety/colours/wheels/pollution/price) back to a valid
+ * early-page kind. Mirrors the heuristic rule so AI refinement can't reintroduce the bug. */
+const TABLE_ONLY = new Set<SlotKind>(['spec-table', 'equipment', 'safety', 'colors', 'colors-interior', 'wheels', 'pollution', 'price']);
+const DATA_ROLES = new Set<PageRole>(['spec', 'safety', 'colors', 'wheels', 'price']);
+function constrainEarlyPages(spec: TemplateSpec): void {
+  let firstData = spec.pages.findIndex((p) => DATA_ROLES.has(p.role));
+  if (firstData < 0) firstData = spec.pages.length;
+  for (const p of spec.pages) {
+    if (p.index >= firstData) continue;
+    for (const s of p.slots) {
+      if (s.blockType !== 'text' || !TABLE_ONLY.has(s.kind)) continue;
+      s.kind = 'marketing-text';
+      s.label = SLOT_LABEL[s.kind];
+    }
+  }
 }

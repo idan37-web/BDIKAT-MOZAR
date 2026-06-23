@@ -297,7 +297,7 @@ export function classifyPage(
  * region's kind no longer just inherits the page role (the bug behind "spec table → marketing
  * text" and "equipment list → colours"). The page role is only a fallback for ambiguous regions.
  */
-function slotKind(role: PageRole, r: Region, isLargestText: boolean): SlotKind {
+function slotKind(role: PageRole, r: Region, isLargestText: boolean, early = false, pageHeight = 0): SlotKind {
   if (r.blockType === 'shape') return 'background';
   if (r.blockType === 'image') {
     // a small image high on the page is almost always a brand logo, not a hero photo
@@ -306,6 +306,17 @@ function slotKind(role: PageRole, r: Region, isLargestText: boolean): SlotKind {
     return role === 'cover' || role === 'feature' ? 'hero-image' : 'image';
   }
   const t = r.text || '';
+  // EARLY pages (everything before the data/equipment tables) only carry: cover/hero imagery,
+  // headings, model name, marketing copy — and, occasionally, a legal disclaimer at the very
+  // bottom. Spec/equipment/safety/colours/wheels/pollution/price can ONLY live in/under the
+  // tables, so never assign them here (fixes "marketing text → equipment/legal/pollution").
+  if (early) {
+    const nearBottom = pageHeight > 0 && r.bbox.y > pageHeight * 0.8;
+    if (KW.legal.test(t) && t.length > 60 && nearBottom) return 'legal';
+    if (role === 'cover' && isLargestText) return 'model-name';
+    if (isLargestText && r.maxFont >= 18) return 'heading';
+    return 'marketing-text';
+  }
   // strong content signals win regardless of the page role
   if (KW.legal.test(t) && t.length > 60) return 'legal';
   if (KW.pollution.test(t)) return 'pollution';
@@ -331,8 +342,8 @@ export const SLOT_LABEL: Record<SlotKind, string> = {
   'model-name': 'שם הדגם',
   heading: 'כותרת',
   'marketing-text': 'טקסט שיווקי',
-  'hero-image': 'תמונת נושא',
-  image: 'תמונה',
+  'hero-image': 'תמונה ראשית',
+  image: 'תמונה משנית',
   'spec-table': 'טבלת מפרט טכני',
   colors: 'צבעי חוץ',
   'colors-interior': 'צבעי פנים',
@@ -502,8 +513,16 @@ export function learnTemplate(docs: DocumentIR[], opts: LearnOptions = {}): Temp
   const baseRegions = docRegions[0];
   const maxPages = base.pages.length;
 
+  // Pre-pass: roles for every page, so we know where the DATA tables begin. Everything before the
+  // first spec/equipment/colours/wheels/price page is an "early" (cover + marketing) page.
+  const DATA_ROLES = new Set<PageRole>(['spec', 'safety', 'colors', 'wheels', 'price']);
+  const pageRoles = base.pages.map((p, pi) => classifyPage(p, baseRegions[pi].filter((r) => !(r.blockType === 'shape' && Math.min(r.bbox.width, r.bbox.height) <= 3)), pi, maxPages).role);
+  let firstDataIdx = pageRoles.findIndex((r) => DATA_ROLES.has(r));
+  if (firstDataIdx < 0) firstDataIdx = maxPages;
+
   const pages: TemplatePageSpec[] = [];
   for (let pi = 0; pi < maxPages; pi++) {
+    const early = pi < firstDataIdx;
     const page = base.pages[pi];
     const allRegions = baseRegions[pi];
     // thin shape regions = gridlines/rules → fixed design layer (too many to be slots);
@@ -536,11 +555,11 @@ export function learnTemplate(docs: DocumentIR[], opts: LearnOptions = {}): Temp
     // per-model values DYNAMIC. The kind comes from the page role (spec→spec-table, etc).
     for (const m of textMatched) {
       const isLargest = m.base.maxFont === largestFont && largestFont > 0;
-      push(slotKind(role, m.base, isLargest), [m]);
+      push(slotKind(role, m.base, isLargest, early, page.height), [m]);
     }
     // shapes (design panels/strips) first so they sit under text/images at generation
     for (const m of shapeMatched) push('background', [m]);
-    for (const m of imageMatched) push(slotKind(role, m.base, false), [m]);
+    for (const m of imageMatched) push(slotKind(role, m.base, false, early, page.height), [m]);
 
     // deterministic stack order: by y then x
     slots.sort((a, b) => a.bbox.y - b.bbox.y || a.bbox.x - b.bbox.x);
