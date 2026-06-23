@@ -1,7 +1,7 @@
 // Mode-aware page canvas. IR is the source of truth.
 //  - original/compare show the reference raster; editable/reconstructed render from IR.
 import { useRef, useState } from 'react';
-import type { PageIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
+import type { PageIR, TextBlockIR, ImageBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
 import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction } from '../types/catalog';
 import { TextEditOverlay } from '../editor/TextEditOverlay';
 
@@ -123,48 +123,54 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill', userSelect: 'none' }} />
       )}
 
-      {/* shape blocks (design panels/strips) — under images & text, render-only */}
-      {showBlocks && page.blocks.filter(isShapeBlock).filter((b) => !b.deleted).sort((a, b) => a.zIndex - b.zIndex).map((b: ShapeBlockIR) => (
-        <div key={b.id} style={{
-          position: 'absolute', left: b.x * scale, top: b.y * scale, width: b.width * scale, height: b.height * scale,
-          background: b.fill || 'transparent', borderRadius: (b.radius || 0) * scale,
-          border: b.stroke ? `${Math.max(1, b.stroke.width * scale)}px solid ${b.stroke.color}` : undefined,
-          opacity: compare ? 0.6 : 1, pointerEvents: 'none',
-        }} />
-      ))}
-
-      {/* image blocks (under text) */}
-      {showBlocks && page.blocks.filter(isImageBlock).filter((b) => !b.deleted).map((b: ImageBlockIR) => {
-        const selected = isSel(b.id);
-        const boxW = b.width * scale, boxH = b.height * scale;
-        // crop = source-fraction window to SHOW: scale the image up and offset so only that window
-        // fills the box (the wrapper clips the rest). No crop → fill the box with objectFit.
-        const c = b.crop && b.crop.fw > 0 && b.crop.fh > 0 ? b.crop : null;
-        const imgStyle: React.CSSProperties = c
-          ? { position: 'absolute', width: boxW / c.fw, height: boxH / c.fh, left: -c.fx * (boxW / c.fw), top: -c.fy * (boxH / c.fh), objectFit: 'fill' }
-          : { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: b.fit || 'cover' };
-        return (
-          <span key={b.id} style={{ position: 'absolute', left: b.x * scale, top: b.y * scale, width: boxW, height: boxH, overflow: 'hidden', outline: selected ? '1.5px solid var(--accent)' : 'none' }}>
-            <img src={b.src} alt="" draggable={false}
-              onMouseDown={interactive ? (e) => startMove(b, e) : undefined}
-              style={{
-                ...imgStyle, userSelect: 'none',
-                opacity: compare ? 0.6 : 1,
-                transform: `rotate(${b.rotation || 0}deg) scaleX(${b.flipH ? -1 : 1})`, transformOrigin: 'center',
-                cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
+      {/* shapes + images in ONE z-sorted pass — so a scrim/panel painted ON TOP of a photo (e.g. a
+          heading darken-overlay) renders above it, exactly as in the source (not hidden behind it). */}
+      {showBlocks && page.blocks
+        .filter((b) => (isShapeBlock(b) || isImageBlock(b)) && !b.deleted)
+        .slice().sort((a, b) => a.zIndex - b.zIndex)
+        .map((blk) => {
+          if (isShapeBlock(blk)) {
+            const b = blk;
+            return (
+              <div key={b.id} style={{
+                position: 'absolute', left: b.x * scale, top: b.y * scale, width: b.width * scale, height: b.height * scale,
+                background: b.fill || 'transparent', borderRadius: (b.radius || 0) * scale,
+                border: b.stroke ? `${Math.max(1, b.stroke.width * scale)}px solid ${b.stroke.color}` : undefined,
+                opacity: (compare ? 0.6 : 1) * (b.opacity ?? 1), pointerEvents: 'none',
               }} />
-            {/* axis-aligned frame around the box (kept outside the rotate/flip transform) */}
-            {b.stroke && (
-              <span style={{
-                position: 'absolute', inset: 0, pointerEvents: 'none',
-                border: `${Math.max(0.5, b.stroke.width * scale)}px solid ${b.stroke.color}`,
-                borderRadius: (b.radius || 0) * scale, boxSizing: 'border-box',
-                opacity: compare ? 0.6 : 1,
-              }} />
-            )}
-          </span>
-        );
-      })}
+            );
+          }
+          const b = blk as ImageBlockIR;
+          const selected = isSel(b.id);
+          const boxW = b.width * scale, boxH = b.height * scale;
+          // crop = source-fraction window to SHOW: scale the image up and offset so only that window
+          // fills the box (the wrapper clips the rest). No crop → fill the box with objectFit.
+          const c = b.crop && b.crop.fw > 0 && b.crop.fh > 0 ? b.crop : null;
+          const imgStyle: React.CSSProperties = c
+            ? { position: 'absolute', width: boxW / c.fw, height: boxH / c.fh, left: -c.fx * (boxW / c.fw), top: -c.fy * (boxH / c.fh), objectFit: 'fill' }
+            : { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: b.fit || 'cover' };
+          return (
+            <span key={b.id} style={{ position: 'absolute', left: b.x * scale, top: b.y * scale, width: boxW, height: boxH, overflow: 'hidden', outline: selected ? '1.5px solid var(--accent)' : 'none' }}>
+              <img src={b.src} alt="" draggable={false}
+                onMouseDown={interactive ? (e) => startMove(b, e) : undefined}
+                style={{
+                  ...imgStyle, userSelect: 'none',
+                  opacity: compare ? 0.6 : 1,
+                  transform: `rotate(${b.rotation || 0}deg) scaleX(${b.flipH ? -1 : 1})`, transformOrigin: 'center',
+                  cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
+                }} />
+              {/* axis-aligned frame around the box (kept outside the rotate/flip transform) */}
+              {b.stroke && (
+                <span style={{
+                  position: 'absolute', inset: 0, pointerEvents: 'none',
+                  border: `${Math.max(0.5, b.stroke.width * scale)}px solid ${b.stroke.color}`,
+                  borderRadius: (b.radius || 0) * scale, boxSizing: 'border-box',
+                  opacity: compare ? 0.6 : 1,
+                }} />
+              )}
+            </span>
+          );
+        })}
 
       {/* table blocks (editable spec grid) */}
       {showBlocks && page.blocks.filter(isTableBlock).filter((b) => !b.deleted).map((b: TableBlockIR) => {

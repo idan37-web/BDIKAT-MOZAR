@@ -12,16 +12,18 @@ function describe(b: BlockIR): { icon: string; label: string; swatch?: string } 
   return { icon: '·', label: b.type };
 }
 
-export function LayersPanel({ blocks, selectedIds, onToggle, onSelectOnly, onClear, onHover }: {
+export function LayersPanel({ blocks, selectedIds, onToggle, onSelectOnly, onClear, onDeselectShapes, onHover }: {
   blocks: BlockIR[];
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
   onSelectOnly: (id: string) => void;
   onClear: () => void;
+  onDeselectShapes: () => void;
   onHover?: (id: string | null) => void;
 }) {
   // top-most first (matches what the user sees on top)
   const ordered = [...blocks].filter((b) => !b.deleted).sort((a, b) => (b.zIndex ?? 0) - (a.zIndex ?? 0));
+  const selectedShapeCount = ordered.filter((b) => isShapeBlock(b) && selectedIds.has(b.id)).length;
   return (
     <div style={{ width: 230, flexShrink: 0, borderInlineEnd: '1px solid var(--line)', background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -30,6 +32,12 @@ export function LayersPanel({ blocks, selectedIds, onToggle, onSelectOnly, onCle
         <span style={{ fontSize: 12, color: 'var(--accent-ink, var(--accent))' }}>{selectedIds.size} נבחרו</span>
         {selectedIds.size > 0 && <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={onClear}>נקה</button>}
       </div>
+      {selectedShapeCount > 0 && (
+        <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--line)' }}>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, width: '100%' }} onClick={onDeselectShapes}
+            title="הסר מהבחירה את כל הצורות/הרקעים המסומנים">בטל בחירת צורות ({selectedShapeCount})</button>
+        </div>
+      )}
       <div style={{ flex: 1, overflowY: 'auto', padding: 6 }}>
         {ordered.map((b) => {
           const d = describe(b);

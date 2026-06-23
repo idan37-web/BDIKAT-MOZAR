@@ -64,6 +64,7 @@ function drawShapeBlock(page: PDFPage, pageH: number, b: ShapeBlockIR): void {
   page.drawRectangle({
     x: b.x, y, width: b.width, height: b.height,
     color: b.fill ? hexToRgb(b.fill) : undefined,
+    opacity: b.opacity != null ? b.opacity : undefined,
     borderColor: b.stroke ? hexToRgb(b.stroke.color) : undefined,
     borderWidth: b.stroke ? b.stroke.width : undefined,
   });

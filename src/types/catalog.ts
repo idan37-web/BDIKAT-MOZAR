@@ -98,6 +98,8 @@ export interface ShapeBlockIR extends BlockIR {
   stroke?: { color: string; width: number };
   /** Corner radius in points. */
   radius?: number;
+  /** Constant fill alpha 0..1 (from the source graphics state) — e.g. a heading scrim. */
+  opacity?: number;
 }
 
 /** One row of a TableBlockIR. `data`/`header` rows carry one cell per column (logical order:

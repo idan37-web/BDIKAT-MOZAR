@@ -31,6 +31,8 @@ export interface ShapeOp {
   bbox: { x: number; y: number; width: number; height: number };
   fill: string; // "#rrggbb"
   line?: boolean; // true = a stroked rule/gridline (render as a thin rect of `fill`)
+  alpha?: number; // constant fill alpha (<1 = semi-transparent, e.g. a heading scrim)
+  shading?: boolean; // a gradient fill (sh) approximated as a flat scrim — kept only behind text
 }
 
 /** A cluster of vector path ink (a logo, a QR/barcode, an icon row, a colour scale) that can't
@@ -66,6 +68,7 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
   let clip: Rect4 | null = null; const clipStack: (Rect4 | null)[] = [];
   let pendingClip = false; // OPS.clip seen → apply current path as clip at the next endPath/paint
   let smaskActive = false;
+  let fillAlpha = 1; const alphaStack: number[] = []; // constant fill alpha (gState 'ca')
   let fill = '#000000';
   let strokeCol = '#000000';
   let pathBox: number[] | null = null; // [minX,minY,maxX,maxY] in path space (constructPath args[2])
@@ -112,11 +115,20 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
 
   for (let i = 0; i < fns.length; i++) {
     const fn = fns[i], a = args[i];
-    if (fn === OPS.save) { stack.push([...ctm] as Mat); clipStack.push(clip); }
-    else if (fn === OPS.restore) { if (stack.length) ctm = stack.pop() as Mat; if (clipStack.length) clip = clipStack.pop() as Rect4 | null; }
+    if (fn === OPS.save) { stack.push([...ctm] as Mat); clipStack.push(clip); alphaStack.push(fillAlpha); }
+    else if (fn === OPS.restore) { if (stack.length) ctm = stack.pop() as Mat; if (clipStack.length) clip = clipStack.pop() as Rect4 | null; if (alphaStack.length) fillAlpha = alphaStack.pop()!; }
     else if (fn === OPS.clip || fn === OPS.eoClip) { pendingClip = true; }
     else if (fn === OPS.transform) ctm = mul(ctm, a as Mat);
-    else if (fn === OPS.setGState) { try { smaskActive = JSON.stringify(a).includes('SMask') ? !JSON.stringify(a).includes('"None"') : smaskActive; } catch { /* ignore */ } }
+    else if (fn === OPS.setGState) {
+      try {
+        smaskActive = JSON.stringify(a).includes('SMask') ? !JSON.stringify(a).includes('"None"') : smaskActive;
+        // gState arg is a list of [key, value] entries; 'ca' = constant fill alpha. pdf.js sometimes
+        // wraps it one level deep ([[[k,v],...]]) — unwrap so we find the pairs either way.
+        let entries: any[] = Array.isArray(a) ? (a as any[]) : [];
+        if (entries.length === 1 && Array.isArray(entries[0]) && Array.isArray(entries[0][0])) entries = entries[0];
+        for (const e of entries) { if (Array.isArray(e) && e[0] === 'ca' && typeof e[1] === 'number') fillAlpha = e[1]; }
+      } catch { /* ignore */ }
+    }
     else if (fn === OPS.setFillRGBColor) { const c = a as number[]; fill = toHex(c[0], c[1], c[2]); }
     else if (fn === OPS.setFillGray) { const g = (a as number[])[0]; const v = g <= 1 ? g * 255 : g; fill = toHex(v, v, v); }
     else if (fn === OPS.setFillCMYKColor) { const [c, m, y, k] = a as number[]; const [r, g, b] = cmykToRgb(c, m, y, k); fill = toHex(r, g, b); }
@@ -137,7 +149,7 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
         const isWhite = fill.toLowerCase() === '#ffffff';
         const nearFull = w >= 0.9 * pageWidth && h >= 0.9 * pageHeight;
         if (w >= 24 && h >= 10 && (!isWhite || (w >= 60 && h >= 30 && !nearFull))) {
-          shapes.push({ opIndex: i, fill, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
+          shapes.push({ opIndex: i, fill, alpha: fillAlpha < 1 ? fillAlpha : undefined, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
         }
         recordInk(fill);
       }
@@ -159,6 +171,19 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
       applyPendingClip();
       pathBox = null; pathCurves = 0;
     } else if (fn === OPS.endPath) { applyPendingClip(); pathBox = null; pathCurves = 0; }
+    else if (fn === OPS.shadingFill) {
+      // a gradient fill — almost always a dark→transparent readability scrim behind a heading.
+      // We can't recover the gradient, so approximate it as a flat semi-transparent dark panel over
+      // its clip region. Kept only if it sits behind text (decided in importPdf), so it never adds
+      // a stray dark box. No clip = page-wide gradient → skip (can't bound it safely).
+      if (clip) {
+        const w = clip.maxX - clip.minX, h = clip.maxY - clip.minY;
+        const nearFull = w >= 0.95 * pageWidth && h >= 0.95 * pageHeight;
+        if (w >= 24 && h >= 10 && !nearFull) {
+          shapes.push({ opIndex: i, fill: '#0b0d12', alpha: 0.5, shading: true, bbox: { x: Math.round(clip.minX), y: Math.round(pageHeight - clip.maxY), width: Math.round(w), height: Math.round(h) } });
+        }
+      }
+    }
     else if (isXObj(fn) || fn === OPS.paintInlineImageXObject || fn === OPS.paintImageMaskXObject) {
       const pts = [apply(ctm, 0, 0), apply(ctm, 1, 0), apply(ctm, 1, 1), apply(ctm, 0, 1)];
       const xs = pts.map((p) => p[0]); const ys = pts.map((p) => p[1]);

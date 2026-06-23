@@ -1,7 +1,7 @@
 // New structured-model app. Stage 2: import. Stage 3: IR-as-truth editor with a
 // textarea overlay and Original/Editable/Reconstructed/Compare view modes.
 import React from 'react';
-import type { DocumentIR, TextBlockIR, ImageBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
+import type { DocumentIR, TextBlockIR, ImageBlockIR, TableBlockIR, ShapeBlockIR, BlockIR } from '../types/catalog';
 import type { TemplateSpec } from '../templates/templateSpec';
 import { ImportScreen } from './ImportScreen';
 import { TemplateScreen } from './TemplateScreen';
@@ -256,6 +256,26 @@ export function App() {
   // toggle one block in the multi-selection (from the layers checklist)
   const toggleSel = (id: string) => { setMulti((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; }); setSel(id); setEditing(null); setEditingCell(null); };
   const selectOnly = (id: string) => { setMulti(new Set([id])); setSel(id); setEditing(null); setEditingCell(null); };
+  // add a semi-transparent dark "scrim" panel behind a text block — restores readability where the
+  // source used a gradient/soft-mask darken-overlay that the IR can't reconstruct. Sits ABOVE the
+  // photo (high zIndex) but just BELOW the text.
+  const addScrimBehind = (b: TextBlockIR) => {
+    const pad = 8;
+    const scrim: ShapeBlockIR = {
+      id: `${page.id}_scrim${Date.now()}`, type: 'shape',
+      x: Math.round(b.x - pad), y: Math.round(b.y - pad), width: Math.round(b.width + pad * 2), height: Math.round(b.height + pad * 2),
+      rotation: 0, zIndex: (b.zIndex ?? 1_000_000) - 1, source: 'user', dirty: true,
+      fill: '#0b0d12', opacity: 0.45, radius: 6,
+    };
+    setDoc((d) => !d ? d : { ...d, pages: d.pages.map((p, i) => i !== cur ? p : { ...p, blocks: [...p.blocks, scrim] }) });
+  };
+
+  // remove every shape/background block from the current selection (keep text/images/tables)
+  const deselectShapes = () => {
+    const shapeIds = new Set(page.blocks.filter((b) => b.type === 'shape' || b.type === 'background').map((b) => b.id));
+    setMulti((prev) => new Set([...prev].filter((id) => !shapeIds.has(id))));
+    if (sel && shapeIds.has(sel)) setSel(null);
+  };
 
   // rubber-band selection that can START in the grey area OUTSIDE the page (maps to page coords)
   const startWrapMarquee = (e: React.MouseEvent) => {
@@ -406,7 +426,7 @@ export function App() {
         {/* layers / elements checklist */}
         {mode === 'editable' && showLayers && (
           <LayersPanel blocks={page.blocks} selectedIds={multi.size ? multi : (sel ? new Set([sel]) : new Set())}
-            onToggle={toggleSel} onSelectOnly={selectOnly} onClear={clearSel} />
+            onToggle={toggleSel} onSelectOnly={selectOnly} onClear={clearSel} onDeselectShapes={deselectShapes} />
         )}
 
         {/* canvas */}
@@ -722,6 +742,7 @@ export function App() {
                 <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>
                 <button onClick={() => changeZ('back')} style={{ flex: 1, fontSize: 12 }}>⤓ לאחור</button>
               </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => addScrimBehind(selBlock)} title="הוסף רקע כהה שקוף-למחצה מאחורי הטקסט לשיפור קריאוּת (למשל כותרת לבנה על תמונה)">+ הצללה מאחורי הטקסט</button>
               <button className="btn btn-ghost btn-sm" onClick={deleteSelected} style={{ color: 'var(--danger)' }}>מחק טקסט</button>
             </div>
           )}

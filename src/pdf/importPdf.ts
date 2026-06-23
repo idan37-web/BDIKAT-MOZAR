@@ -61,12 +61,17 @@ export async function importPdf(
     // text sits in paint order ABOVE images (captions over photos)
     textBlocks.forEach((b, i) => { b.zIndex = 1_000_000 + i; });
 
-    const shapeBlocks: ShapeBlockIR[] = dedupeShapes(shapeOps).map((s, i) => ({
-      id: `${id}_sh${i}`, type: 'shape', x: s.bbox.x, y: s.bbox.y, width: s.bbox.width, height: s.bbox.height,
-      rotation: 0, zIndex: s.opIndex, source: 'original',
-      originalBBox: { x: s.bbox.x, y: s.bbox.y, width: s.bbox.width, height: s.bbox.height },
-      fill: s.fill,
-    }));
+    const overlapsBox = (a: { x: number; y: number; width: number; height: number }, b: typeof a) =>
+      !(a.x > b.x + b.width || a.x + a.width < b.x || a.y > b.y + b.height || a.y + a.height < b.y);
+    const shapeBlocks: ShapeBlockIR[] = dedupeShapes(shapeOps)
+      // an approximated gradient scrim is kept ONLY where it actually sits behind a text run
+      .filter((s) => !s.shading || textBlocks.some((t) => !t.deleted && overlapsBox(s.bbox, t)))
+      .map((s, i) => ({
+        id: `${id}_sh${i}`, type: 'shape', x: s.bbox.x, y: s.bbox.y, width: s.bbox.width, height: s.bbox.height,
+        rotation: 0, zIndex: s.opIndex, source: 'original',
+        originalBBox: { x: s.bbox.x, y: s.bbox.y, width: s.bbox.width, height: s.bbox.height },
+        fill: s.fill, opacity: s.alpha,
+      }));
 
     let previewImage: string | undefined;
     const imageBlocks: ImageBlockIR[] = [];
