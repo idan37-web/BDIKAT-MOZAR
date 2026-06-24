@@ -63,9 +63,25 @@ export async function importPdf(
 
     const overlapsBox = (a: { x: number; y: number; width: number; height: number }, b: typeof a) =>
       !(a.x > b.x + b.width || a.x + a.width < b.x || a.y > b.y + b.height || a.y + a.height < b.y);
+    const lumOf = (hex?: string) => { const m = /^#(..)(..)(..)$/.exec(hex || ''); if (!m) return 1; const [r, g, b] = [1, 2, 3].map((k) => parseInt(m[k], 16)); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
+    // A dark, FULLY-OPAQUE panel painted on top of (and covering most of) an image is almost always a
+    // soft-mask / transparency-group darken-overlay whose real alpha we can't read — captured solid it
+    // becomes a black block over the page. Drop it (the user can add a controllable scrim instead).
+    const isOpaqueOverlay = (s: ShapeOp) => {
+      if (s.alpha != null && s.alpha < 1) return false; // genuine semi-transparent → keep
+      if (s.line || lumOf(s.fill) > 0.22) return false;  // only DARK opaque panels
+      return imageOps.some((im) => {
+        if (im.opIndex >= s.opIndex) return false; // shape must sit ON TOP of the image
+        const ix = Math.max(0, Math.min(s.bbox.x + s.bbox.width, im.bbox.x + im.bbox.width) - Math.max(s.bbox.x, im.bbox.x));
+        const iy = Math.max(0, Math.min(s.bbox.y + s.bbox.height, im.bbox.y + im.bbox.height) - Math.max(s.bbox.y, im.bbox.y));
+        const imArea = im.bbox.width * im.bbox.height;
+        return imArea > 0 && (ix * iy) / imArea > 0.5;
+      });
+    };
     const shapeBlocks: ShapeBlockIR[] = dedupeShapes(shapeOps)
       // an approximated gradient scrim is kept ONLY where it actually sits behind a text run
       .filter((s) => !s.shading || textBlocks.some((t) => !t.deleted && overlapsBox(s.bbox, t)))
+      .filter((s) => !isOpaqueOverlay(s))
       .map((s, i) => ({
         id: `${id}_sh${i}`, type: 'shape', x: s.bbox.x, y: s.bbox.y, width: s.bbox.width, height: s.bbox.height,
         rotation: 0, zIndex: s.opIndex, source: 'original',
