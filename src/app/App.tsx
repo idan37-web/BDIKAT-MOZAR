@@ -13,6 +13,7 @@ import { fitTextBlock, fitTableBlock, canvasMeasureFor } from '../catalog/autofi
 import { exportPdf } from '../pdf/exportPdf';
 import { saveProject } from '../store/library';
 import { removeBackground } from './imageBg';
+import { tintImage, vignetteImage } from './imageFx';
 
 const MODES: { id: ViewMode; label: string }[] = [
   { id: 'original', label: 'מקור' },
@@ -64,6 +65,9 @@ export function App() {
   const [mode, setMode] = React.useState<ViewMode>('editable');
   const [zoom, setZoom] = React.useState(1); // canvas zoom, independent of page rail
   const [bgTolerance, setBgTolerance] = React.useState(40); // background-removal sensitivity
+  const [tintColor, setTintColor] = React.useState('#1b4fa0'); // image tint colour
+  const [tintStrength, setTintStrength] = React.useState(50); // %
+  const [vignette, setVignette] = React.useState(45); // edge-darken %
   const [sel, setSel] = React.useState<string | null>(null);
   const [multi, setMulti] = React.useState<Set<string>>(() => new Set());
   const [editing, setEditing] = React.useState<string | null>(null);
@@ -336,6 +340,9 @@ export function App() {
     // always run from the ORIGINAL so re-adjusting the slider re-runs cleanly (not on an already-cut image)
     try { const out = await removeBackground(selImage.originalImageRef || selImage.src, bgTolerance); patchBlock(selImage.id, { src: out }); } catch { /* ignore */ }
   };
+  // recolour / edge-darken the selected image (baked into the pixels; stacks on the current image)
+  const applyTint = async () => { if (!selImage) return; try { const out = await tintImage(selImage.src, tintColor, tintStrength / 100); patchBlock(selImage.id, { src: out }); } catch { /* ignore */ } };
+  const applyVignette = async () => { if (!selImage) return; try { const out = await vignetteImage(selImage.src, vignette / 100); patchBlock(selImage.id, { src: out }); } catch { /* ignore */ } };
 
   // "Fit text": make every text box on the page show its FULL text (shrink→wrap→grow, no clip),
   // and shrink each table's font so no cell clips — keeping table alignment intact.
@@ -617,6 +624,30 @@ export function App() {
                   <button className="btn btn-ghost btn-sm" onClick={() => patchBlock(selImage.id, { src: selImage.originalImageRef || selImage.src })} title="החזר את התמונה המקורית">בטל</button>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>נשאר רקע? הגדל רגישות. נחתכו אזורים מהאובייקט? הקטן רגישות, ולחץ שוב.</div>
+              </div>
+              {/* recolour (tint) */}
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>צביעה בגוון</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', marginBottom: 6 }}>
+                  {['#1b4fa0', '#c0142d', '#0a7d3b', '#7a3cb8', '#d98a00', '#111418', '#9aa0a6'].map((c) => (
+                    <button key={c} onClick={() => setTintColor(c)} title={c}
+                      style={{ width: 22, height: 22, borderRadius: 6, background: c, cursor: 'pointer', border: tintColor.toLowerCase() === c ? '2px solid var(--accent)' : '1px solid var(--line-2)' }} />
+                  ))}
+                  <input type="color" value={/^#[0-9a-f]{6}$/i.test(tintColor) ? tintColor : '#1b4fa0'} onChange={(e) => setTintColor(e.target.value)}
+                    style={{ width: 26, height: 26, padding: 0, border: '1px solid var(--line-2)', borderRadius: 6, cursor: 'pointer', background: 'none' }} />
+                </div>
+                <label style={{ fontSize: 12, fontWeight: 700 }}>עוצמה: {tintStrength}%
+                  <input type="range" min={5} max={100} value={tintStrength} onChange={(e) => setTintStrength(+e.target.value)} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                </label>
+                <button className="btn btn-ghost btn-sm" style={{ width: '100%' }} onClick={applyTint}>החל צביעה</button>
+              </div>
+              {/* darken edges (vignette) */}
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700 }}>הכהיית קצוות (מבחוץ פנימה): {vignette}%
+                  <input type="range" min={5} max={95} value={vignette} onChange={(e) => setVignette(+e.target.value)} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                </label>
+                <button className="btn btn-ghost btn-sm" style={{ width: '100%' }} onClick={applyVignette}>החל הכהיית קצוות</button>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>אפשר לשלב צביעה והכהיה. "איפוס" למטה מחזיר את התמונה המקורית.</div>
               </div>
               <div className="seg">
                 <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>
