@@ -78,7 +78,7 @@ export async function importPdf(
         return imArea > 0 && (ix * iy) / imArea > 0.55;
       });
     };
-    const shapeBlocks: ShapeBlockIR[] = dedupeShapes(shapeOps)
+    let shapeBlocks: ShapeBlockIR[] = dedupeShapes(shapeOps)
       // an approximated gradient scrim is kept ONLY where it actually sits behind a text run
       .filter((s) => !s.shading || textBlocks.some((t) => !t.deleted && overlapsBox(s.bbox, t)))
       .filter((s) => !isOpaqueOverlay(s))
@@ -157,6 +157,48 @@ export async function importPdf(
           // logos/QR/generic graphics carry no real text, so never remove editable text under them.
           if (g.kind === 'scale') for (const t of textBlocks) if (within(t, g.bbox)) t.deleted = true;
         });
+
+        // Vector LOGOS / wordmarks / QR / badges are often captured as crude MONO (white/black)
+        // solid-fill RECTANGLES — which render as ugly blocks. Cluster those mono fills and replace
+        // each cluster with a faithful raster crop of the page render (real glyph pixels), dropping
+        // the rectangles. Colours panels (design) are left as editable shapes.
+        const pageArea = vp.width * vp.height;
+        const mono = (hex?: string) => { const L = lumOf(hex); return L >= 0.85 || (L >= 0 && L <= 0.16); };
+        const logoish = shapeBlocks.filter((s) =>
+          !!s.fill && mono(s.fill) && Math.min(s.width, s.height) >= 5 && Math.max(s.width, s.height) <= 360
+          && s.width * s.height <= pageArea * 0.10 && (s.opacity == null || s.opacity >= 1));
+        if (logoish.length) {
+          const GAP = 60;
+          const par = logoish.map((_, i) => i);
+          const find = (i: number): number => (par[i] === i ? i : (par[i] = find(par[i])));
+          const near = (a: ShapeBlockIR, b: ShapeBlockIR) => {
+            const dx = Math.max(0, Math.max(a.x, b.x) - Math.min(a.x + a.width, b.x + b.width));
+            const dy = Math.max(0, Math.max(a.y, b.y) - Math.min(a.y + a.height, b.y + b.height));
+            return dx <= GAP && dy <= GAP;
+          };
+          for (let i = 0; i < logoish.length; i++) for (let j = i + 1; j < logoish.length; j++) if (near(logoish[i], logoish[j])) par[find(i)] = find(j);
+          const groups = new Map<number, ShapeBlockIR[]>();
+          logoish.forEach((s, i) => { const r = find(i); (groups.get(r) || groups.set(r, []).get(r)!).push(s); });
+          const drop = new Set<string>();
+          let li = 0;
+          for (const grp of groups.values()) {
+            const x0 = Math.min(...grp.map((s) => s.x)), y0 = Math.min(...grp.map((s) => s.y));
+            const x1 = Math.max(...grp.map((s) => s.x + s.width)), y1 = Math.max(...grp.map((s) => s.y + s.height));
+            const bbox = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+            if (bbox.width < 10 || bbox.height < 8 || bbox.width * bbox.height > pageArea * 0.2) continue;
+            const src = cropGraphic(rendered!.canvas, rendered!.scale, bbox, []);
+            if (!src) continue;
+            imageBlocks.push({
+              id: `${id}_logo${li}`, type: 'image', x: bbox.x, y: bbox.y, width: bbox.width, height: bbox.height,
+              rotation: 0, zIndex: 901_000 + li, source: 'original',
+              originalBBox: { ...bbox }, src, originalImageRef: src, fit: 'contain',
+            });
+            li++;
+            grp.forEach((s) => drop.add(s.id));
+            if (li > 60) break;
+          }
+          if (drop.size) shapeBlocks = shapeBlocks.filter((s) => !drop.has(s.id));
+        }
       }
     }
 
