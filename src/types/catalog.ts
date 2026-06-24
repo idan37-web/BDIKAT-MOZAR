@@ -91,6 +91,8 @@ export interface ImageBlockIR extends BlockIR {
   radius?: number;
   /** Opacity 0..1 (1 = opaque). */
   opacity?: number;
+  /** Non-destructive per-edge darkening 0..1 (0=none, 1=black at that edge → transparent inward). */
+  edgeShade?: { top: number; right: number; bottom: number; left: number };
 }
 
 export interface ShapeBlockIR extends BlockIR {

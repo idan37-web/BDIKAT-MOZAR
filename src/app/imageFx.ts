@@ -1,6 +1,7 @@
 // Image effects baked onto the pixels (so the editor preview and the exported PDF match exactly).
 // Both preserve any existing transparency (e.g. after background removal) by restoring the original
 // alpha channel after the effect. Browser/canvas only.
+import type { DocumentIR } from '../types/catalog';
 
 function load(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -61,4 +62,54 @@ export async function vignetteImage(src: string, strength = 0.5): Promise<string
   ctx.fillRect(0, 0, w, h);
   restoreAlpha(ctx, w, h, orig);
   return c.toDataURL('image/png');
+}
+
+export interface EdgeShade { top: number; right: number; bottom: number; left: number }
+
+/** CSS background (stacked linear-gradients) for live per-edge darkening — each edge fades inward. */
+export function edgeShadeBackground(e: EdgeShade): string {
+  const parts: string[] = [];
+  if (e.top > 0) parts.push(`linear-gradient(to bottom, rgba(0,0,0,${e.top}), rgba(0,0,0,0) 42%)`);
+  if (e.bottom > 0) parts.push(`linear-gradient(to top, rgba(0,0,0,${e.bottom}), rgba(0,0,0,0) 42%)`);
+  if (e.left > 0) parts.push(`linear-gradient(to right, rgba(0,0,0,${e.left}), rgba(0,0,0,0) 42%)`);
+  if (e.right > 0) parts.push(`linear-gradient(to left, rgba(0,0,0,${e.right}), rgba(0,0,0,0) 42%)`);
+  return parts.join(', ');
+}
+
+const hasShade = (e?: EdgeShade) => !!e && (e.top > 0 || e.right > 0 || e.bottom > 0 || e.left > 0);
+
+/** Bake per-edge darkening onto the pixels (for export). Mirrors edgeShadeBackground. Alpha kept. */
+export async function bakeEdgeShade(src: string, e: EdgeShade): Promise<string> {
+  if (!hasShade(e)) return src;
+  const img = await load(src);
+  const s = setup(img); if (!s) return src;
+  const { c, ctx, w, h } = s;
+  const orig = ctx.getImageData(0, 0, w, h).data.slice();
+  const grad = (x0: number, y0: number, x1: number, y1: number, a: number) => {
+    const g = ctx.createLinearGradient(x0, y0, x1, y1);
+    g.addColorStop(0, `rgba(0,0,0,${a})`); g.addColorStop(0.42, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  };
+  if (e.top > 0) grad(0, 0, 0, h, e.top);
+  if (e.bottom > 0) grad(0, h, 0, 0, e.bottom);
+  if (e.left > 0) grad(0, 0, w, 0, e.left);
+  if (e.right > 0) grad(w, 0, 0, 0, e.right);
+  restoreAlpha(ctx, w, h, orig);
+  return c.toDataURL('image/png');
+}
+
+/** Bake every image's live per-edge shade into its pixels → a doc clone ready for vector export
+ * (the editor keeps the shade non-destructive; this is only applied to the exported copy). */
+export async function bakeDocEdgeShades(doc: DocumentIR): Promise<DocumentIR> {
+  const pages = await Promise.all(doc.pages.map(async (p) => ({
+    ...p,
+    blocks: await Promise.all(p.blocks.map(async (b) => {
+      if (b.type === 'image' && hasShade((b as any).edgeShade)) {
+        const src = await bakeEdgeShade((b as any).src, (b as any).edgeShade as EdgeShade);
+        return { ...b, src };
+      }
+      return b;
+    })),
+  })));
+  return { ...doc, pages };
 }

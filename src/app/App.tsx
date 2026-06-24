@@ -13,7 +13,7 @@ import { fitTextBlock, fitTableBlock, canvasMeasureFor } from '../catalog/autofi
 import { exportPdf } from '../pdf/exportPdf';
 import { saveProject } from '../store/library';
 import { removeBackground } from './imageBg';
-import { tintImage, vignetteImage } from './imageFx';
+import { tintImage, bakeDocEdgeShades } from './imageFx';
 
 const MODES: { id: ViewMode; label: string }[] = [
   { id: 'original', label: 'מקור' },
@@ -67,7 +67,6 @@ export function App() {
   const [bgTolerance, setBgTolerance] = React.useState(40); // background-removal sensitivity
   const [tintColor, setTintColor] = React.useState('#1b4fa0'); // image tint colour
   const [tintStrength, setTintStrength] = React.useState(50); // %
-  const [vignette, setVignette] = React.useState(45); // edge-darken %
   const [sel, setSel] = React.useState<string | null>(null);
   const [multi, setMulti] = React.useState<Set<string>>(() => new Set());
   const [editing, setEditing] = React.useState<string | null>(null);
@@ -99,7 +98,8 @@ export function App() {
     setExporting(true); setExportErr(null);
     try {
       const { regular, bold } = await loadExportFonts(doc.brand || '');
-      const bytes = await exportPdf(doc, regular, bold);
+      const exportDoc = await bakeDocEdgeShades(doc); // bake live per-edge shading into the pixels
+      const bytes = await exportPdf(exportDoc, regular, bold);
       const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -342,7 +342,6 @@ export function App() {
   };
   // recolour / edge-darken the selected image (baked into the pixels; stacks on the current image)
   const applyTint = async () => { if (!selImage) return; try { const out = await tintImage(selImage.src, tintColor, tintStrength / 100); patchBlock(selImage.id, { src: out }); } catch { /* ignore */ } };
-  const applyVignette = async () => { if (!selImage) return; try { const out = await vignetteImage(selImage.src, vignette / 100); patchBlock(selImage.id, { src: out }); } catch { /* ignore */ } };
 
   // "Fit text": make every text box on the page show its FULL text (shrink→wrap→grow, no clip),
   // and shrink each table's font so no cell clips — keeping table alignment intact.
@@ -641,14 +640,32 @@ export function App() {
                 </label>
                 <button className="btn btn-ghost btn-sm" style={{ width: '100%' }} onClick={applyTint}>החל צביעה</button>
               </div>
-              {/* darken edges (vignette) */}
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 700 }}>הכהיית קצוות (מבחוץ פנימה): {vignette}%
-                  <input type="range" min={5} max={95} value={vignette} onChange={(e) => setVignette(+e.target.value)} style={{ width: '100%', accentColor: 'var(--accent)' }} />
-                </label>
-                <button className="btn btn-ghost btn-sm" style={{ width: '100%' }} onClick={applyVignette}>החל הכהיית קצוות</button>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>אפשר לשלב צביעה והכהיה. "איפוס" למטה מחזיר את התמונה המקורית.</div>
-              </div>
+              {/* darken edges — per-edge, LIVE (no button; never compounds) */}
+              {(() => {
+                const e = selImage.edgeShade || { top: 0, right: 0, bottom: 0, left: 0 };
+                const setEdge = (k: 'top' | 'right' | 'bottom' | 'left', v: number) => patchBlock(selImage.id, { edgeShade: { ...e, [k]: v / 100 } });
+                const Row = ({ k, label }: { k: 'top' | 'right' | 'bottom' | 'left'; label: string }) => (
+                  <label style={{ fontSize: 12, fontWeight: 700, display: 'block' }}>{label}: {Math.round((e[k] || 0) * 100)}%
+                    <input type="range" min={0} max={100} value={Math.round((e[k] || 0) * 100)} onChange={(ev) => setEdge(k, +ev.target.value)} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                  </label>
+                );
+                const any = e.top || e.right || e.bottom || e.left;
+                return (
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span>הכהיית קצוות (מבחוץ פנימה)</span>
+                      {any ? <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => patchBlock(selImage.id, { edgeShade: undefined })}>אפס</button> : null}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <Row k="top" label="עליון" />
+                      <Row k="bottom" label="תחתון" />
+                      <Row k="left" label="שמאל" />
+                      <Row k="right" label="ימין" />
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>ההצללה מתעדכנת מיד עם הזזת הבר, לכל קצה בנפרד. נצרבת לתמונה רק בייצוא.</div>
+                  </div>
+                );
+              })()}
               <div className="seg">
                 <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>
                 <button onClick={() => changeZ('back')} style={{ flex: 1, fontSize: 12 }}>⤓ לאחור</button>

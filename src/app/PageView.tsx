@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import type { PageIR, TextBlockIR, ImageBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
 import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction } from '../types/catalog';
 import { TextEditOverlay } from '../editor/TextEditOverlay';
+import { edgeShadeBackground } from './imageFx';
 
 export interface CellRef { tableId: string; r: number; c: number; }
 
@@ -159,6 +160,10 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
                   transform: `rotate(${b.rotation || 0}deg) scaleX(${b.flipH ? -1 : 1})`, transformOrigin: 'center',
                   cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
                 }} />
+              {/* live per-edge darkening overlay (non-destructive; baked only on export) */}
+              {b.edgeShade && (b.edgeShade.top || b.edgeShade.right || b.edgeShade.bottom || b.edgeShade.left) ? (
+                <span style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: edgeShadeBackground(b.edgeShade), opacity: compare ? 0.6 : 1 }} />
+              ) : null}
               {/* axis-aligned frame around the box (kept outside the rotate/flip transform) */}
               {b.stroke && (
                 <span style={{
