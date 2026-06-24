@@ -184,8 +184,14 @@ export async function importPdf(
           for (const grp of groups.values()) {
             const x0 = Math.min(...grp.map((s) => s.x)), y0 = Math.min(...grp.map((s) => s.y));
             const x1 = Math.max(...grp.map((s) => s.x + s.width)), y1 = Math.max(...grp.map((s) => s.y + s.height));
-            const bbox = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+            let bbox = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
             if (bbox.width < 10 || bbox.height < 8 || bbox.width * bbox.height > pageArea * 0.2) continue;
+            // PAD the crop region: the solid fills are tighter than the rendered glyph (strokes,
+            // anti-aliasing, the diaeresis/chevron tips), so a tight crop cuts the logo. Pad and
+            // clamp to the page; the surrounding (uniform) background blends with the page.
+            const pad = Math.max(4, Math.round(Math.min(bbox.width, bbox.height) * 0.18));
+            const px = Math.max(0, bbox.x - pad), py = Math.max(0, bbox.y - pad);
+            bbox = { x: px, y: py, width: Math.min(vp.width - px, bbox.width + pad * 2), height: Math.min(vp.height - py, bbox.height + pad * 2) };
             const src = cropGraphic(rendered!.canvas, rendered!.scale, bbox, []);
             if (!src) continue;
             imageBlocks.push({
