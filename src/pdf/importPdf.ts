@@ -69,13 +69,13 @@ export async function importPdf(
     // becomes a black block over the page. Drop it (the user can add a controllable scrim instead).
     const isOpaqueOverlay = (s: ShapeOp) => {
       if (s.alpha != null && s.alpha < 1) return false; // genuine semi-transparent → keep
-      if (s.line || lumOf(s.fill) > 0.22) return false;  // only DARK opaque panels
+      if (s.line || lumOf(s.fill) > 0.9) return false;   // keep near-white cards; drop dark/grey overlays
       return imageOps.some((im) => {
         if (im.opIndex >= s.opIndex) return false; // shape must sit ON TOP of the image
         const ix = Math.max(0, Math.min(s.bbox.x + s.bbox.width, im.bbox.x + im.bbox.width) - Math.max(s.bbox.x, im.bbox.x));
         const iy = Math.max(0, Math.min(s.bbox.y + s.bbox.height, im.bbox.y + im.bbox.height) - Math.max(s.bbox.y, im.bbox.y));
         const imArea = im.bbox.width * im.bbox.height;
-        return imArea > 0 && (ix * iy) / imArea > 0.5;
+        return imArea > 0 && (ix * iy) / imArea > 0.55;
       });
     };
     const shapeBlocks: ShapeBlockIR[] = dedupeShapes(shapeOps)

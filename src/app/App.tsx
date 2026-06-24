@@ -177,6 +177,7 @@ export function App() {
   const selBlock = selAny?.type === 'text' ? (selAny as TextBlockIR) : undefined;
   const selImage = selAny?.type === 'image' ? (selAny as ImageBlockIR) : undefined;
   const selTable = selAny?.type === 'table' ? (selAny as TableBlockIR) : undefined;
+  const selShape = selAny && (selAny.type === 'shape' || selAny.type === 'background') ? (selAny as ShapeBlockIR) : undefined;
 
   const patchBlock = (id: string, patch: Partial<BlockIR> & Record<string, unknown>) => {
     setDoc((d) => !d ? d : {
@@ -522,6 +523,10 @@ export function App() {
                   ))}
                 </div>
               </div>
+              <label style={{ fontSize: 12, fontWeight: 700 }}>שקיפות: {Math.round((selImage.opacity ?? 1) * 100)}%
+                <input type="range" min={0} max={100} value={Math.round((selImage.opacity ?? 1) * 100)}
+                  onChange={(e) => patchBlock(selImage.id, { opacity: +e.target.value / 100 })} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+              </label>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>היפוך וסיבוב</div>
                 <div style={{ display: 'flex', gap: 6 }}>
@@ -675,6 +680,32 @@ export function App() {
                 <button onClick={() => changeZ('back')} style={{ flex: 1, fontSize: 12 }}>⤓ לאחור</button>
               </div>
               <button className="btn btn-ghost btn-sm" onClick={deleteSelected} style={{ color: 'var(--danger)' }}>מחק טבלה</button>
+            </div>
+          ) : selShape ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ fontWeight: 800 }}>{selShape.type === 'background' ? 'רקע' : 'צורה'}</div>
+              <p style={{ fontSize: 12.5, color: 'var(--ink-2)', margin: 0 }}>פאנל/רקע מהמקור. אפשר לשנות צבע, שקיפות, או למחוק.</p>
+              <label style={{ fontSize: 12, fontWeight: 700 }}>שקיפות: {Math.round((selShape.opacity ?? 1) * 100)}%
+                <input type="range" min={0} max={100} value={Math.round((selShape.opacity ?? 1) * 100)}
+                  onChange={(e) => patchBlock(selShape.id, { opacity: +e.target.value / 100 })} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+              </label>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>צבע מילוי</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                  {['#111418', '#ffffff', '#c0142d', '#1b4fa0', '#0a7d3b', '#9aa0a6'].map((c) => (
+                    <button key={c} onClick={() => patchBlock(selShape.id, { fill: c })} title={c}
+                      style={{ width: 22, height: 22, borderRadius: 6, background: c, cursor: 'pointer', border: (selShape.fill || '').toLowerCase() === c ? '2px solid var(--accent)' : '1px solid var(--line-2)' }} />
+                  ))}
+                  <input type="color" value={/^#[0-9a-f]{6}$/i.test(selShape.fill || '') ? selShape.fill! : '#111418'}
+                    onChange={(e) => patchBlock(selShape.id, { fill: e.target.value })}
+                    style={{ width: 26, height: 26, padding: 0, border: '1px solid var(--line-2)', borderRadius: 6, cursor: 'pointer', background: 'none' }} />
+                </div>
+              </div>
+              <div className="seg">
+                <button onClick={() => changeZ('front')} style={{ flex: 1, fontSize: 12 }}>⤒ לקדמה</button>
+                <button onClick={() => changeZ('back')} style={{ flex: 1, fontSize: 12 }}>⤓ לאחור</button>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={deleteSelected} style={{ color: 'var(--danger)' }}>מחק צורה</button>
             </div>
           ) : !selBlock ? (
             <p style={{ color: 'var(--ink-3)', fontSize: 13 }}>בחר אלמנט (קליק) — טקסט, תמונה או טבלה. Shift/⌘-קליק לבחירה מרובה. Delete למחיקה.</p>

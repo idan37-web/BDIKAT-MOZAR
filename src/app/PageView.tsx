@@ -155,7 +155,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
                 onMouseDown={interactive ? (e) => startMove(b, e) : undefined}
                 style={{
                   ...imgStyle, userSelect: 'none',
-                  opacity: compare ? 0.6 : 1,
+                  opacity: (compare ? 0.6 : 1) * (b.opacity ?? 1),
                   transform: `rotate(${b.rotation || 0}deg) scaleX(${b.flipH ? -1 : 1})`, transformOrigin: 'center',
                   cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
                 }} />

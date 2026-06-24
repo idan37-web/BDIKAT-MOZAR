@@ -469,7 +469,15 @@ function isDensePage(page: PageIR): boolean {
   const texts = page.blocks.filter(isTextBlock);
   if (texts.length < 40) return false;
   const small = texts.filter((t) => t.fontSize < 10).length;
-  return small / texts.length >= 0.55;
+  if (small / texts.length < 0.55) return false;
+  // A marketing spread (a large hero image + a big heading) is NOT a data table even when it is
+  // text-dense — so we DON'T treat it as a grid. That lets its paragraphs cluster into ONE slot
+  // each, instead of one slot per wrapped line. (Real spec tables have no big hero image.)
+  const pageArea = page.width * page.height;
+  const bigImage = page.blocks.filter(isImageBlock).some((im) => im.width * im.height >= pageArea * 0.22);
+  const bigHeading = texts.some((t) => t.fontSize >= 18);
+  if (bigImage && bigHeading) return false;
+  return true;
 }
 
 export interface LearnOptions {

@@ -89,6 +89,8 @@ export interface ImageBlockIR extends BlockIR {
   stroke?: { color: string; width: number };
   /** Outline corner radius in points. */
   radius?: number;
+  /** Opacity 0..1 (1 = opaque). */
+  opacity?: number;
 }
 
 export interface ShapeBlockIR extends BlockIR {

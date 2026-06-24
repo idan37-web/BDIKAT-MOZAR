@@ -86,7 +86,7 @@ function drawImageBlock(page: PDFPage, pageH: number, b: ImageBlockIR, img: PDFI
     const dYb = pageH - b.y - dH + cr.fy * dH; // bottom-left of the full image
     page.pushOperators(pushGraphicsState(), rectangle(b.x, boxBottom, b.width, b.height), clip(), endPath());
     if (b.flipH) page.pushOperators(translate(b.x + b.width / 2, 0), scale(-1, 1), translate(-(b.x + b.width / 2), 0));
-    page.drawImage(img, { x: dX, y: dYb, width: dW, height: dH });
+    page.drawImage(img, { x: dX, y: dYb, width: dW, height: dH, opacity: b.opacity != null ? b.opacity : undefined });
     page.pushOperators(popGraphicsState());
     if (b.stroke && b.stroke.width > 0) {
       page.drawRectangle({ x: b.x, y: boxBottom, width: b.width, height: b.height, borderColor: hexToRgb(b.stroke.color), borderWidth: b.stroke.width });
@@ -121,7 +121,7 @@ function drawImageBlock(page: PDFPage, pageH: number, b: ImageBlockIR, img: PDFI
   page.pushOperators(translate(cx, cy));
   if (b.rotation) page.pushOperators(rotateDegrees(-b.rotation));
   if (b.flipH) page.pushOperators(scale(-1, 1));
-  page.drawImage(img, { x: -drawW / 2, y: -drawH / 2, width: drawW, height: drawH });
+  page.drawImage(img, { x: -drawW / 2, y: -drawH / 2, width: drawW, height: drawH, opacity: b.opacity != null ? b.opacity : undefined });
   page.pushOperators(popGraphicsState());
 
   // optional axis-aligned frame around the slot box (drawn after, so it sits on top)
