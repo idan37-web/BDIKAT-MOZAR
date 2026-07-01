@@ -7,7 +7,7 @@ import type { SlotSpec, TemplateSpec } from '../templates/templateSpec';
 import { listTemplates } from '../store/library';
 import { generateCatalog, validateCatalog, dynamicSlots, applyBrandLogos, REQUIRED_KINDS, type BindingMap } from '../catalog/generateCatalog';
 import { loadBrandLogoDataUrl } from './brandLogo';
-import { autofitDocument, canvasMeasureFor, type Measure } from '../catalog/autofit';
+import { autofitDocument, canvasMeasureFor, fitTableBlock, type Measure } from '../catalog/autofit';
 import { brandFont, ensureFontFace, FALLBACK_HEBREW } from './brandFont';
 import { parseSpreadsheetSheets, toCSV } from '../data/parseSheet';
 import { sheetToCells, blankTemplateCells, type SheetIssue } from '../data/specSheetFormat';
@@ -172,6 +172,14 @@ export function GenerateScreen({ initialSpec, onCreate, onBack }: {
     applyBrandLogos(doc, spec!, logoData);
     // Milestone B: auto-fit text to its box before opening (shrink→wrap→grow→flag)
     autofitDocument(doc, canvasMeasureFor(family));
+    // fit every generated TABLE too, so no cell opens clipped (same logic as the editor button)
+    const cv = document.createElement('canvas'); const cctx = cv.getContext('2d');
+    const cellMeasure = (text: string, size: number, bold: boolean) => {
+      if (!cctx) return text.length * size * 0.5;
+      cctx.font = `${bold ? 700 : 400} ${size}px ${family}`;
+      return cctx.measureText(text).width;
+    };
+    for (const p of doc.pages) for (const b of p.blocks) if (b.type === 'table') fitTableBlock(b as import('../types/catalog').TableBlockIR, cellMeasure);
     // generated pages have no source raster → render real thumbnails so the rail isn't blank
     ensureThumbnails(doc.pages, family);
     return doc;

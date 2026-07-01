@@ -65,6 +65,24 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   SAME editor and exports via the SAME vector pipeline. UI: "יצירת קטלוג" screen. `npm run verify:gen` gates it
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
 
+## Round 9 — deep-diagnosis root fixes + holistic hardening
+- **Import-time text clustering** (`extractLayout.clusterTextBlocks`, called in importPdf): pdf.js runs →
+  LINES (same baseline, gap <0.9em, joined in CONTENT order — bidi untouched) → PARAGRAPHS (leading ≤0.55em,
+  x-overlap, prose-only; a line sharing a y-band with another is a table ROW and never merges). C3 766→543
+  blocks; spec grids keep per-cell blocks. Editor now shows paragraphs as single textareas.
+- **Classifier bugs fixed**: unitCount/looksLikeSpec used NON-GLOBAL match() (always 1 — unit thresholds never
+  worked); heritage/timeline pages (years, no units) were `spec` with 124 per-line slots — added years-vs-
+  digitRatio guards in classifyPage AND isDensePage; numericSpec requires digitRatio ≥0.03; density thresholds
+  retuned post-clustering (40→26). 3008/5008 now yield near-identical role sequences (cross-doc consistency).
+- **Editor fidelity**: text box height ×1.3 (true glyph box ≈1.38×, measured vs PyMuPDF; top error only 0.09em
+  — overlay pt→px mapping itself verified consistent). regionText joins by line+content order (not x).
+- **Offline fonts**: UI fonts (Assistant/Rubik/JetBrains Mono, hebrew+latin woff2) bundled in
+  `src/assets/fonts/` + fonts.css imported in main.tsx; the Google-CDN @import was REMOVED from legacy.css —
+  the single-file build now keeps its typography with no network.
+- **Editor perf**: drag/resize handlers rAF-throttled (was a full-page re-render per mousemove).
+- **Editor completeness**: duplicate selection (Ctrl/⌘+D + toolbar שכפל), Escape clears selection.
+- **Generation**: buildDoc also runs fitTableBlock on every generated table — no clipped cells on open.
+
 ## Feedback round 7 (AI-completion bugfix · Gemini 3 · brand logos · image crop)
 - **AI-completion "nothing happens" FIXED**: two `[spec?.id]` effects fought — the reset effect ran
   AFTER the starter-seed effect and set `sheet=null`, so the "השלם את החסר" button was `disabled={!sheet}`.

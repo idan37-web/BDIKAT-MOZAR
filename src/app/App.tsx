@@ -128,6 +128,32 @@ export function App() {
     setSel(null); setMulti(new Set()); setEditing(null); setEditingCell(null);
   }, [multi, sel, cur]);
 
+  // duplicate the selected block(s): clones at a +12pt offset, selection moves to the clones
+  const duplicateSelected = React.useCallback(() => {
+    const ids = multi.size ? multi : (sel ? new Set([sel]) : new Set<string>());
+    if (!ids.size) return;
+    const newIds: string[] = [];
+    setDoc((d) => {
+      if (!d) return d;
+      return {
+        ...d,
+        pages: d.pages.map((p, i) => {
+          if (i !== cur) return p;
+          const clones = p.blocks.filter((b) => ids.has(b.id) && !b.deleted).map((b, k) => {
+            const nb = structuredClone(b);
+            nb.id = `${b.id}_dup${Date.now()}_${k}`;
+            nb.x += 12; nb.y += 12; nb.source = 'user'; nb.dirty = true;
+            nb.zIndex = (b.zIndex ?? 0) + 1;
+            newIds.push(nb.id);
+            return nb;
+          });
+          return { ...p, blocks: [...p.blocks, ...clones] };
+        }),
+      };
+    });
+    if (newIds.length) { setMulti(new Set(newIds)); setSel(newIds[newIds.length - 1]); }
+  }, [multi, sel, cur, setDoc]);
+
   // nudge the selection by (dx,dy) points (arrow keys)
   const nudge = React.useCallback((dx: number, dy: number) => {
     const ids = multi.size ? multi : (sel ? new Set([sel]) : null);
@@ -147,14 +173,16 @@ export function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (mod && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
       if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); return; }
+      if (e.key === 'Escape' && !editing && !editingCell) { clearSel(); return; }
       if (editing || editingCell || (!multi.size && !sel)) return;
+      if (mod && (e.key === 'd' || e.key === 'D')) { e.preventDefault(); duplicateSelected(); return; }
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); return; }
       const a = ARROWS[e.key];
       if (a) { e.preventDefault(); const s = e.shiftKey ? 10 : 1; nudge(a[0] * s, a[1] * s); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deleteSelected, nudge, undo, redo, editing, editingCell, multi, sel]);
+  }, [deleteSelected, duplicateSelected, nudge, undo, redo, editing, editingCell, multi, sel]);
 
   const openDoc = (d: DocumentIR, templateId?: string) => {
     templateIdRef.current = templateId;
@@ -390,6 +418,7 @@ export function App() {
         {mode === 'editable' && <button className={showLayers ? 'btn btn-sm on' : 'btn btn-ghost btn-sm'} onClick={() => setShowLayers((v) => !v)} style={{ fontSize: 12 }}>שכבות</button>}
         {mode === 'editable' && <button className="btn btn-ghost btn-sm" onClick={selectAll} style={{ fontSize: 12 }}>בחר הכל</button>}
         {mode === 'editable' && <button className="btn btn-ghost btn-sm" onClick={fitPageText} style={{ fontSize: 12 }} title="ודא שכל הטקסטים והטבלאות בעמוד מוצגים במלואם, בלי חיתוך">התאם טקסט</button>}
+        {mode === 'editable' && (multi.size > 0 || sel) && <button className="btn btn-ghost btn-sm" onClick={duplicateSelected} style={{ fontSize: 12 }} title="שכפל את הבחירה (Ctrl/⌘+D)">שכפל</button>}
         <div className="seg" style={{ display: 'flex', alignItems: 'center' }} title="גודל תצוגת הקאנבס (לא משנה את גודל העמוד)">
           <button onClick={() => setZoom((z) => Math.max(0.25, Math.round((z - 0.1) * 100) / 100))} style={{ fontSize: 13, padding: '0 8px' }}>−</button>
           <button onClick={() => setZoom(1)} style={{ fontSize: 11, minWidth: 46, fontVariantNumeric: 'tabular-nums' }} title="אפס זום ל-100%">{Math.round(zoom * 100)}%</button>

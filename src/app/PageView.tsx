@@ -64,13 +64,19 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
       .map((bl) => ({ id: bl.id, x: bl.x, y: bl.y, w: bl.width, h: bl.height }));
     const sx = e.clientX, sy = e.clientY;
     let moved = false;
-    const move = (ev: MouseEvent) => {
+    // rAF-throttle: apply at most one document update per frame (raw mousemove can fire
+    // 100+ times/sec and each update re-renders the whole page — visible jank on dense pages)
+    let raf = 0; let lastEv: MouseEvent | null = null;
+    const apply = () => {
+      raf = 0;
+      const ev = lastEv; if (!ev) return;
       const dx = (ev.clientX - sx) / scale, dy = (ev.clientY - sy) / scale;
       if (!moved && Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
       moved = true;
       for (const o of origs) onResize?.(o.id, { x: Math.round(o.x + dx), y: Math.round(o.y + dy), width: o.w, height: o.h });
     };
-    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    const move = (ev: MouseEvent) => { lastEv = ev; if (!raf) raf = requestAnimationFrame(apply); };
+    const up = () => { if (raf) cancelAnimationFrame(raf); apply(); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
   };
 
@@ -98,8 +104,10 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
   const startResize = (b: BlockIR, corner: Corner, e: React.MouseEvent) => {
     e.stopPropagation(); e.preventDefault();
     drag.current = { id: b.id, corner, sx: e.clientX, sy: e.clientY, x: b.x, y: b.y, w: b.width, h: b.height };
-    const move = (ev: MouseEvent) => {
-      const d = drag.current; if (!d || !onResize) return;
+    let raf = 0; let lastEv: MouseEvent | null = null;
+    const apply = () => {
+      raf = 0;
+      const ev = lastEv; const d = drag.current; if (!ev || !d || !onResize) return;
       const dx = (ev.clientX - d.sx) / scale, dy = (ev.clientY - d.sy) / scale;
       let { x, y, w: bw, h: bh } = d;
       if (d.corner.includes('e')) bw = d.w + dx;
@@ -109,7 +117,8 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
       bw = Math.max(8, bw); bh = Math.max(8, bh);
       onResize(d.id, { x: Math.round(x), y: Math.round(y), width: Math.round(bw), height: Math.round(bh) });
     };
-    const up = () => { drag.current = null; window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    const move = (ev: MouseEvent) => { lastEv = ev; if (!raf) raf = requestAnimationFrame(apply); };
+    const up = () => { if (raf) cancelAnimationFrame(raf); apply(); drag.current = null; window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
   };
 
