@@ -1,7 +1,7 @@
 // Stage 2 (C.4): turn an uploaded PDF (ArrayBuffer) into a DocumentIR using pdf.js.
 // The imported IR — never IMPORT3008/IMPORTC3 — is the source of truth after upload.
 import type { BBox, DocumentIR, PageIR, ImageBlockIR, ShapeBlockIR } from '../types/catalog';
-import { extractTextBlocks } from './extractLayout';
+import { extractTextBlocks, clusterTextBlocks } from './extractLayout';
 import { renderPageCanvas, cropCanvasErasingText, cropGraphic, sampleInkColor } from './renderPage';
 import { walkPage, resolveImage, type ShapeOp, type MakeCanvas } from './extractImages';
 
@@ -57,7 +57,8 @@ export async function importPdf(
         return o ? { name: o.name, bold: !!(o.bold || o.black) } : undefined;
       } catch { return undefined; }
     };
-    const textBlocks = extractTextBlocks(tc, vp.height, id, resolveFont);
+    // cluster raw runs into lines/paragraphs (logical order preserved; tables stay per-cell)
+    const textBlocks = clusterTextBlocks(extractTextBlocks(tc, vp.height, id, resolveFont));
     // text sits in paint order ABOVE images (captions over photos)
     textBlocks.forEach((b, i) => { b.zIndex = 1_000_000 + i; });
 

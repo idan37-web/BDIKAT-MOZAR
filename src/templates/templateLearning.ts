@@ -90,7 +90,12 @@ function mode<T>(items: T[]): T {
 
 /** Order a region's runs into reading order and join (RTL: right→left, top→bottom). */
 function regionText(blocks: TextBlockIR[], rtl: boolean): string {
-  const sorted = [...blocks].sort((a, b) => a.y - b.y || (rtl ? b.x - a.x : a.x - b.x));
+  void rtl;
+  // Sort by LINE (y), then by CONTENT order (zIndex ≈ stream order) within the line — NOT by x.
+  // The content stream is in logical order; sorting by x gives VISUAL order, which scrambles
+  // mixed Hebrew + Latin/number lines (bidi must never happen before joining logical text).
+  const lineOf = (b: TextBlockIR) => Math.round(b.y / Math.max(4, b.fontSize * 0.6));
+  const sorted = [...blocks].sort((a, b) => lineOf(a) - lineOf(b) || (a.zIndex ?? 0) - (b.zIndex ?? 0));
   let out = '';
   let prevY = -Infinity;
   let prevFont = sorted[0]?.fontSize || 10;
@@ -210,7 +215,7 @@ function looksLikeSpec(r: Region): boolean {
   const t = r.text;
   if (!t) return false;
   const digits = (t.match(/\d/g) || []).length;
-  const units = (t.match(KW.units) || []).length;
+  const units = (t.match(new RegExp(KW.units.source, 'gi')) || []).length; // GLOBAL count (non-global match always returned 1)
   if (units >= 2) return true;
   if (KW.engine.test(t) && digits >= 3) return true;
   // a dense numeric cluster in a small font (a spec column collapsed into one region)
@@ -246,11 +251,21 @@ export function classifyPage(
   // technical spec table vs equipment list: BOTH are dense small-font pages, so density alone is
   // not enough — the technical spec is NUMERIC, the equipment list is SENTENCES. Require numbers.
   const digitCount = (allText.match(/\d/g) || []).length;
-  const unitCount = (allText.match(KW.units) || []).length;
+  const unitCount = (allText.match(new RegExp(KW.units.source, 'gi')) || []).length; // GLOBAL count
   const digitRatio = digitCount / Math.max(1, allText.length); // technical spec ≈ 0.04-0.09, equipment ≈ 0.01
-  const dense = n >= 40 && smallRatio >= 0.55;
-  const numericSpec = dense && (unitCount >= 2 || (digitRatio >= 0.03 && digitCount >= 40));
-  if (numericSpec || (hit('engine') && digitRatio >= 0.025 && unitCount >= 1)) {
+  // (import-time clustering merges runs into lines/paragraphs, so a data page now lands
+  // around 30-60 blocks instead of 80+ — the density threshold reflects the clustered counts)
+  const dense = n >= 26 && smallRatio >= 0.55;
+  // heritage/timeline narrative: dense small text whose "numbers" are YEARS, with almost no
+  // measurement units — a brand-story page, NOT a data table (was misclassified as spec).
+  const yearCount = (allText.match(/\b(19|20)\d{2}\b/g) || []).length;
+  if (dense && yearCount >= 4 && digitRatio < 0.04) {
+    ev.push(`timeline/heritage narrative: ${yearCount} years, ratio ${digitRatio.toFixed(3)}`);
+    return { role: 'feature', evidence: ev };
+  }
+  // a REAL spec page is numeric (ratio ≥0.03), not just "mentions units somewhere in prose"
+  const numericSpec = dense && digitRatio >= 0.03 && (unitCount >= 2 || digitCount >= 40);
+  if (numericSpec || (hit('engine') && digitRatio >= 0.03 && unitCount >= 3)) {
     ev.push(`spec (numeric): ${digitCount} digits, ratio ${digitRatio.toFixed(3)}, ${unitCount} units`);
     return { role: 'spec', evidence: ev };
   }
@@ -467,9 +482,14 @@ function buildSlot(
 /** Dense table page = many small-font runs → keep cells unclustered (preserve the grid). */
 function isDensePage(page: PageIR): boolean {
   const texts = page.blocks.filter(isTextBlock);
-  if (texts.length < 40) return false;
+  if (texts.length < 26) return false;
   const small = texts.filter((t) => t.fontSize < 10).length;
   if (small / texts.length < 0.55) return false;
+  // timeline/heritage narrative (years, no measurement units) is prose, not a grid — cluster it
+  const allText = texts.map((t) => t.text).join(' ');
+  const years = (allText.match(/\b(19|20)\d{2}\b/g) || []).length;
+  const units = (allText.match(KW.units) || []).length;
+  if (years >= 4 && units <= 1) return false;
   // A marketing spread (a large hero image + a big heading) is NOT a data table even when it is
   // text-dense — so we DON'T treat it as a grid. That lets its paragraphs cluster into ONE slot
   // each, instead of one slot per wrapped line. (Real spec tables have no big hero image.)

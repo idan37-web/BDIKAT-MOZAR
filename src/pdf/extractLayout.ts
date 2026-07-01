@@ -46,6 +46,9 @@ export function extractTextBlocks(
     // pdf.js baseline y (bottom-left). Convert the glyph box top to top-left origin.
     const ascent = it.height || size;
     const top = pageHeight - t[5] - ascent;
+    // real glyph boxes are ~1.3× the nominal size (ascender+descender); a box of exactly
+    // `size` visually clips descenders in the editor (measured vs PyMuPDF: true ≈ 1.38×).
+    const boxH = (it.height || size) * 1.3;
 
     const info = resolveFont?.(it.fontName);
     const realName = info?.name || it.fontName;
@@ -59,11 +62,11 @@ export function extractTextBlocks(
       x: round(left),
       y: round(top),
       width: round(it.width),
-      height: round(it.height || size * 1.2),
+      height: round(boxH),
       rotation: 0,
       zIndex: z++,
       source: 'original',
-      originalBBox: { x: round(left), y: round(top), width: round(it.width), height: round(it.height || size * 1.2) },
+      originalBBox: { x: round(left), y: round(top), width: round(it.width), height: round(boxH) },
       text: str,
       originalText: str,
       fontFamily: cleanFontName(realName),
@@ -76,6 +79,103 @@ export function extractTextBlocks(
     });
   }
   return blocks;
+}
+
+// ---------------------------------------------------------------------------
+// Import-time clustering: raw pdf.js runs → LINES → PARAGRAPHS.
+// pdf.js emits one item per show-text run (often a single word), so a paragraph
+// arrives as dozens of blocks. We merge in LOGICAL (content-stream) order — never
+// by x — so bidi is untouched (reordering happens only at render/export).
+// ---------------------------------------------------------------------------
+
+const HEB = /[֐-׿]/;
+function isRtlText(s: string): boolean {
+  let he = 0, lat = 0;
+  for (const ch of s) { if (HEB.test(ch)) he++; else if (/[A-Za-z]/.test(ch)) lat++; }
+  return he >= lat && he > 0;
+}
+
+/** Merge same-baseline adjacent runs into LINES, then stacked prose lines into PARAGRAPHS.
+ * Table safety: a line that shares its y-band with another line (a table ROW with several
+ * cells) is never paragraph-merged, and big horizontal gaps (column gutters) never line-merge —
+ * so spec/equipment grids keep one block per cell. */
+export function clusterTextBlocks(blocks: TextBlockIR[]): TextBlockIR[] {
+  if (blocks.length < 2) return blocks;
+
+  // ---- phase 1: lines (union-find over same-baseline neighbours) ----
+  const par = blocks.map((_, i) => i);
+  const find = (i: number): number => (par[i] === i ? i : (par[i] = find(par[i])));
+  for (let i = 0; i < blocks.length; i++) {
+    for (let j = i + 1; j < blocks.length; j++) {
+      const a = blocks[i], b = blocks[j];
+      const fa = a.fontSize || 10, fb = b.fontSize || 10;
+      if (Math.max(fa, fb) / Math.min(fa, fb) > 1.3) continue;
+      if (Math.abs(a.y - b.y) > Math.min(fa, fb) * 0.4) continue;
+      const gap = Math.max(a.x, b.x) - Math.min(a.x + a.width, b.x + b.width);
+      if (gap > Math.max(fa, fb) * 0.9 || gap < -Math.max(fa, fb)) continue; // gutters & deep overlaps stay apart
+      par[find(i)] = find(j);
+    }
+  }
+  const groups = new Map<number, TextBlockIR[]>();
+  blocks.forEach((b, i) => { const r = find(i); (groups.get(r) || groups.set(r, []).get(r)!).push(b); });
+
+  const mergeGroup = (grp: TextBlockIR[], joiner: string): TextBlockIR => {
+    // CONTENT order = original array order (logical); never sort by x
+    const longest = grp.reduce((m, b) => (b.text.length > m.text.length ? b : m), grp[0]);
+    const x0 = Math.min(...grp.map((b) => b.x)), y0 = Math.min(...grp.map((b) => b.y));
+    const x1 = Math.max(...grp.map((b) => b.x + b.width)), y1 = Math.max(...grp.map((b) => b.y + b.height));
+    const text = grp.map((b) => b.text.trim()).filter(Boolean).join(joiner);
+    const rtl = isRtlText(text);
+    return {
+      ...longest,
+      x: x0, y: y0, width: x1 - x0, height: y1 - y0,
+      originalBBox: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 },
+      text, originalText: text,
+      fontSize: Math.max(...grp.map((b) => b.fontSize)),
+      direction: rtl ? 'rtl' : 'ltr',
+      align: rtl ? 'end' : 'start',
+    };
+  };
+
+  const lines: TextBlockIR[] = [];
+  for (const grp of groups.values()) lines.push(grp.length === 1 ? grp[0] : mergeGroup(grp, ' '));
+  lines.sort((a, b) => a.y - b.y || a.x - b.x);
+
+  // ---- phase 2: paragraphs (stacked prose lines; table rows excluded) ----
+  const isProse = (b: TextBlockIR) => b.text.trim().split(/\s+/).length >= 2 || b.text.trim().length >= 14;
+  const hasRowSibling = (i: number) => lines.some((o, j) => j !== i
+    && Math.abs(o.y - lines[i].y) < Math.min(o.fontSize, lines[i].fontSize) * 0.5
+    && (Math.max(o.x, lines[i].x) - Math.min(o.x + o.width, lines[i].x + lines[i].width)) > 0);
+  const par2 = lines.map((_, i) => i);
+  const find2 = (i: number): number => (par2[i] === i ? i : (par2[i] = find2(par2[i])));
+  for (let i = 0; i < lines.length; i++) {
+    const a = lines[i];
+    if (!isProse(a) || hasRowSibling(i)) continue;
+    for (let j = i + 1; j < lines.length; j++) {
+      const b = lines[j];
+      if (!isProse(b) || hasRowSibling(j)) continue;
+      const fa = a.fontSize, fb = b.fontSize;
+      if (Math.max(fa, fb) / Math.min(fa, fb) > 1.15) continue;
+      const vgap = b.y - (a.y + a.height);
+      if (vgap < -2 || vgap > Math.min(fa, fb) * 0.55) continue; // real paragraph leading only
+      const xOverlap = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+      if (xOverlap < Math.min(a.width, b.width) * 0.5) continue;
+      par2[find2(i)] = find2(j);
+    }
+  }
+  const groups2 = new Map<number, TextBlockIR[]>();
+  lines.forEach((b, i) => { const r = find2(i); (groups2.get(r) || groups2.set(r, []).get(r)!).push(b); });
+  const out: TextBlockIR[] = [];
+  for (const grp of groups2.values()) {
+    if (grp.length === 1) { out.push(grp[0]); continue; }
+    grp.sort((a, b) => a.y - b.y);
+    const m = mergeGroup(grp, '\n');
+    // real leading from the source: distance between consecutive line tops / font size
+    const lead = (grp[1].y - grp[0].y) / Math.max(1, m.fontSize);
+    m.lineHeight = Math.min(1.8, Math.max(1.05, Math.round(lead * 100) / 100));
+    out.push(m);
+  }
+  return out.sort((a, b) => a.y - b.y || a.x - b.x);
 }
 
 function round(n: number): number { return Math.round(n); }
