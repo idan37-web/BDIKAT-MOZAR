@@ -38,6 +38,25 @@ interface Props {
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se';
 
+// Editor↔export WYSIWYG parity for single-line text: the vector export shrinks a one-line box's
+// font (down to a 0.72 floor) until it fits the box width (planTextLines). The editor renders the
+// SAME shrink so nothing looks clipped on screen that would fit on export. Cached canvas measure.
+let _mctx: CanvasRenderingContext2D | null | undefined;
+const _mcache = new Map<string, number>();
+function oneLineFitFactor(text: string, family: string, weight: number, px: number, maxW: number): number {
+  if (_mctx === undefined) _mctx = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
+  if (!_mctx || !text) return 1;
+  const key = `${weight}|${Math.round(px * 2) / 2}|${family}|${text}`;
+  let w = _mcache.get(key);
+  if (w === undefined) {
+    _mctx.font = `${weight} ${px}px ${family}`;
+    w = _mctx.measureText(text).width;
+    if (_mcache.size > 4000) _mcache.clear();
+    _mcache.set(key, w);
+  }
+  return w > maxW ? Math.max(0.72, maxW / w) : 1;
+}
+
 export function PageView({ page, scale, mode, fontFamily, selectedId, selectedIds, editingId, onSelect, onMarquee, onStartEdit, onChangeText, onResize, onCommit, editingCell, onStartEditCell, onChangeCell, onCommitCell, pageRef }: Props) {
   const isSel = (id: string) => selectedIds ? selectedIds.has(id) : selectedId === id;
   const singleSel = !selectedIds || selectedIds.size <= 1;
@@ -254,6 +273,11 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
         const selected = isSel(b.id);
         // a single-line box must not wrap (matches the vector export, which clips to the box)
         const oneLine = b.height <= b.fontSize * (b.lineHeight || 1.2) * 1.5;
+        // export-parity shrink: single lines whose brand-font width exceeds the box render at the
+        // same reduced size the export will use (no more visually clipped narrow cells)
+        const fit = oneLine
+          ? oneLineFitFactor(b.text.replace(/\s*\n\s*/g, ' '), fontFamily || b.fontFamily, b.fontWeight || 400, b.fontSize * scale, b.width * scale + 1)
+          : 1;
         return (
           <div key={b.id}
             dir={b.direction === 'ltr' ? 'ltr' : 'rtl'}
@@ -262,7 +286,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
             style={{
               position: 'absolute', left: b.x * scale, top: b.y * scale,
               width: b.width * scale, height: b.height * scale,
-              fontSize: b.fontSize * scale, lineHeight: b.lineHeight,
+              fontSize: b.fontSize * scale * fit, lineHeight: b.lineHeight,
               fontFamily: fontFamily || b.fontFamily, fontWeight: b.fontWeight,
               color: compare ? 'rgba(20,40,120,.55)' : b.color,
               whiteSpace: oneLine ? 'nowrap' : 'pre-wrap', overflow: 'hidden',

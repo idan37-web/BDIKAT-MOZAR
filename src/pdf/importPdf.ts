@@ -185,7 +185,8 @@ export async function importPdf(
           for (const grp of groups.values()) {
             const x0 = Math.min(...grp.map((s) => s.x)), y0 = Math.min(...grp.map((s) => s.y));
             const x1 = Math.max(...grp.map((s) => s.x + s.width)), y1 = Math.max(...grp.map((s) => s.y + s.height));
-            let bbox = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+            const core = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }; // UNpadded — for text de-dup below
+            let bbox = { ...core };
             if (bbox.width < 10 || bbox.height < 8 || bbox.width * bbox.height > pageArea * 0.2) continue;
             // PAD the crop region: the solid fills are tighter than the rendered glyph (strokes,
             // anti-aliasing, the diaeresis/chevron tips), so a tight crop cuts the logo. Pad and
@@ -202,6 +203,12 @@ export async function importPdf(
             });
             li++;
             grp.forEach((s) => drop.add(s.id));
+            // the baked raster CONTAINS its own text (a badge like "5 שנות אחריות") — drop the
+            // now-duplicate editable runs that sit fully inside the CORE (unpadded) region
+            for (const t of textBlocks) {
+              if (t.deleted) continue;
+              if (t.x >= core.x - 1 && t.y >= core.y - 1 && t.x + t.width <= core.x + core.width + 1 && t.y + t.height <= core.y + core.height + 1) t.deleted = true;
+            }
             if (li > 60) break;
           }
           if (drop.size) shapeBlocks = shapeBlocks.filter((s) => !drop.has(s.id));
