@@ -289,16 +289,35 @@ export function App() {
   // toggle one block in the multi-selection (from the layers checklist)
   const toggleSel = (id: string) => { setMulti((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; }); setSel(id); setEditing(null); setEditingCell(null); };
   const selectOnly = (id: string) => { setMulti(new Set([id])); setSel(id); setEditing(null); setEditingCell(null); };
-  // add a semi-transparent dark "scrim" panel behind a text block — restores readability where the
-  // source used a gradient/soft-mask darken-overlay that the IR can't reconstruct. Sits ABOVE the
-  // photo (high zIndex) but just BELOW the text.
+  // add a SOFT-EDGED dark "scrim" behind a text block — restores readability where the source used
+  // a gradient/soft-mask darken-overlay the IR can't reconstruct. Rendered as a feathered-alpha PNG
+  // image block (editor and export are automatically identical), sitting just BELOW the text.
   const addScrimBehind = (b: TextBlockIR) => {
-    const pad = 8;
-    const scrim: ShapeBlockIR = {
-      id: `${page.id}_scrim${Date.now()}`, type: 'shape',
-      x: Math.round(b.x - pad), y: Math.round(b.y - pad), width: Math.round(b.width + pad * 2), height: Math.round(b.height + pad * 2),
+    const pad = Math.max(14, Math.round(b.fontSize * 0.9));
+    const w = Math.round(b.width + pad * 2), h = Math.round(b.height + pad * 2);
+    // feathered rect: alpha = smoothstep from each edge inward (soft on ALL edges)
+    const W = 256, H = Math.max(64, Math.round((h / w) * 256));
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d'); if (!ctx) return;
+    const img = ctx.createImageData(W, H);
+    const fx = Math.max(8, Math.round(W * 0.16)), fy = Math.max(8, Math.round(H * 0.28));
+    const ss = (t: number) => { const c = Math.max(0, Math.min(1, t)); return c * c * (3 - 2 * c); };
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const ax = ss(Math.min(x, W - 1 - x) / fx);
+        const ay = ss(Math.min(y, H - 1 - y) / fy);
+        const a = Math.round(255 * 0.55 * ax * ay);
+        const q = (y * W + x) * 4;
+        img.data[q] = 11; img.data[q + 1] = 13; img.data[q + 2] = 18; img.data[q + 3] = a;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const src = cv.toDataURL('image/png');
+    const scrim: ImageBlockIR = {
+      id: `${page.id}_scrim${Date.now()}`, type: 'image',
+      x: Math.round(b.x - pad), y: Math.round(b.y - pad), width: w, height: h,
       rotation: 0, zIndex: (b.zIndex ?? 1_000_000) - 1, source: 'user', dirty: true,
-      fill: '#0b0d12', opacity: 0.45, radius: 6,
+      src, originalImageRef: src, fit: 'fill' as ImageBlockIR['fit'],
     };
     setDoc((d) => !d ? d : { ...d, pages: d.pages.map((p, i) => i !== cur ? p : { ...p, blocks: [...p.blocks, scrim] }) });
   };

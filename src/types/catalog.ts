@@ -14,7 +14,7 @@ export type BlockType =
 export type BlockSource = 'original' | 'generated' | 'user';
 export type TextDirection = 'rtl' | 'ltr' | 'mixed';
 export type TextAlign = 'start' | 'center' | 'end' | 'justify';
-export type ImageFit = 'cover' | 'contain';
+export type ImageFit = 'cover' | 'contain' | 'fill';
 
 export interface BBox {
   x: number;

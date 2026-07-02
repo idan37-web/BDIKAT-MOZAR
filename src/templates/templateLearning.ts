@@ -90,12 +90,11 @@ function mode<T>(items: T[]): T {
 
 /** Order a region's runs into reading order and join (RTL: right→left, top→bottom). */
 function regionText(blocks: TextBlockIR[], rtl: boolean): string {
-  void rtl;
-  // Sort by LINE (y), then by CONTENT order (zIndex ≈ stream order) within the line — NOT by x.
-  // The content stream is in logical order; sorting by x gives VISUAL order, which scrambles
-  // mixed Hebrew + Latin/number lines (bidi must never happen before joining logical text).
+  // Sort by LINE (y), then by POSITION within the line: an RTL line reads right→left, so
+  // x-descending == logical reading order regardless of whether the generator emitted the
+  // stream in logical or visual order (stream order is NOT reliable across generators).
   const lineOf = (b: TextBlockIR) => Math.round(b.y / Math.max(4, b.fontSize * 0.6));
-  const sorted = [...blocks].sort((a, b) => lineOf(a) - lineOf(b) || (a.zIndex ?? 0) - (b.zIndex ?? 0));
+  const sorted = [...blocks].sort((a, b) => lineOf(a) - lineOf(b) || (rtl ? (b.x + b.width) - (a.x + a.width) : a.x - b.x));
   let out = '';
   let prevY = -Infinity;
   let prevFont = sorted[0]?.fontSize || 10;

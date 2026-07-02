@@ -67,6 +67,21 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   SAME editor and exports via the SAME vector pipeline. UI: "יצירת קטלוג" screen. `npm run verify:gen` gates it
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
 
+## Round 10 — back-page class fixes (visual-order bidi, rotation, clip, occlusion) + soft scrim
+- **Mixed-line run order**: generators emit mixed HE/EN lines in LOGICAL or VISUAL stream order —
+  stream order is NOT reliable. Line joins (clusterTextBlocks + regionText) now order runs by
+  POSITION (x-descending for RTL) — correct in both cases (dealer/phone lines now read right).
+- **Rotated text**: angle captured from the text matrix (rotation on the block), rendered rotated in
+  the editor (transformOrigin baseline-left) and exported via translate+rotate ops. Vertical
+  sidebars ("10/2025") no longer overlap the layout. Rotated runs are excluded from clustering.
+- **Fills now honour the ACTIVE CLIP** (was images-only): an unclipped capture painted invisible
+  header bars over photos. Non-rect clips can't be represented — plus a rule that drops a full-bleed
+  dark band lying entirely on an image (invisible-in-source header treatments).
+- **bgWhite eraser**: a near-full-page white fill = the page background re-painted; it ERASES earlier
+  covered shapes instead of being skipped (black bar under a white repaint no longer leaks).
+- **Soft scrim**: the manual scrim is now a feathered-alpha PNG image block (smoothstep falloff on
+  all edges) — soft like a real gradient, identical in editor and export, resizable, opacity slider.
+
 ## Round 9 — deep-diagnosis root fixes + holistic hardening
 - **Import-time text clustering** (`extractLayout.clusterTextBlocks`, called in importPdf): pdf.js runs →
   LINES (same baseline, gap <0.9em, joined in CONTENT order — bidi untouched) → PARAGRAPHS (leading ≤0.55em,

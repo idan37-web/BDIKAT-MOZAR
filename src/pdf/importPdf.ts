@@ -74,13 +74,33 @@ export async function importPdf(
         const ix = Math.max(0, Math.min(s.bbox.x + s.bbox.width, im.bbox.x + im.bbox.width) - Math.max(s.bbox.x, im.bbox.x));
         const iy = Math.max(0, Math.min(s.bbox.y + s.bbox.height, im.bbox.y + im.bbox.height) - Math.max(s.bbox.y, im.bbox.y));
         const imArea = im.bbox.width * im.bbox.height;
-        return imArea > 0 && (ix * iy) / imArea > 0.55;
+        if (imArea > 0 && (ix * iy) / imArea > 0.55) return true; // covers most of the image
+        // OR: a full-bleed dark BAND lying entirely on the image (e.g. a header strip whose real
+        // shape came from a non-rect clip we can't represent — invisible in the source)
+        const sArea = s.bbox.width * s.bbox.height;
+        return sArea > 0 && (ix * iy) / sArea > 0.9 && s.bbox.width >= im.bbox.width * 0.85 && lumOf(s.fill) <= 0.16;
       });
     };
+    // A near-full-page WHITE fill is the page background being re-painted: it ERASES every
+    // earlier shape it covers (they're fully occluded in the source — e.g. a black header bar
+    // later painted over). Apply the erasers, then drop them (white bg is the page default).
+    let visibleShapeOps = shapeOps;
+    for (const bg of shapeOps.filter((s) => s.bgWhite)) {
+      visibleShapeOps = visibleShapeOps.filter((s) => {
+        if (s === bg || s.opIndex >= bg.opIndex) return true;
+        // compare the shape's VISIBLE (page-clamped) part — a bar hanging off-page still counts
+        const sx0 = Math.max(0, s.bbox.x), sy0 = Math.max(0, s.bbox.y);
+        const sx1 = Math.min(vp.width, s.bbox.x + s.bbox.width), sy1 = Math.min(vp.height, s.bbox.y + s.bbox.height);
+        const inside = sx0 >= bg.bbox.x - 2 && sy0 >= bg.bbox.y - 2
+          && sx1 <= bg.bbox.x + bg.bbox.width + 2 && sy1 <= bg.bbox.y + bg.bbox.height + 2;
+        return !inside;
+      });
+    }
+    visibleShapeOps = visibleShapeOps.filter((s) => !s.bgWhite);
     // a fill painted under a soft mask is NOT the flat colour the page shows (the mask turns it
     // into a gradient/shaped overlay we cannot reproduce) — exclude it BEFORE dedupe so a masked
     // duplicate can never merge into (and poison) a real panel. Same for opaque full-cover overlays.
-    let shapeBlocks: ShapeBlockIR[] = dedupeShapes(shapeOps.filter((s) => !s.masked))
+    let shapeBlocks: ShapeBlockIR[] = dedupeShapes(visibleShapeOps.filter((s) => !s.masked))
       .filter((s) => !isOpaqueOverlay(s))
       .map((s, i) => ({
         id: `${id}_sh${i}`, type: 'shape', x: s.bbox.x, y: s.bbox.y, width: s.bbox.width, height: s.bbox.height,

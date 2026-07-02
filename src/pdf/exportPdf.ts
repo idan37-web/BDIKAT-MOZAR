@@ -160,6 +160,15 @@ export function planTextLines(
 function drawTextBlock(page: PDFPage, pageH: number, tb: TextBlockIR, font: Awaited<ReturnType<PDFDocument['embedFont']>>): void {
   const size = tb.fontSize;
   const color = hexToRgb(tb.color);
+  // rotated run (vertical sidebar): rotate the page CTM around the baseline-left point —
+  // matches the editor's transformOrigin — and draw the single line at the local origin.
+  if (tb.rotation) {
+    const visual = logicalToVisual(tb.text.replace(/\s*\n\s*/g, ' '), tb.direction === 'ltr' ? 'ltr' : 'rtl');
+    page.pushOperators(pushGraphicsState(), translate(tb.x, pageH - tb.y - size * 0.85), rotateDegrees(-tb.rotation));
+    drawVisualLine(page, 0, 0, visual, size, font, color);
+    page.pushOperators(popGraphicsState());
+    return;
+  }
   const measure = (t: string, s: number) => font.widthOfTextAtSize(t, s);
   const { lines, drawSize } = planTextLines(tb.text, tb.width, tb.height, size, tb.lineHeight || 1.2, measure);
   const drawGap = drawSize * (tb.lineHeight || 1.2);

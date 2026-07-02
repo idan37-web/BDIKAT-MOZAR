@@ -43,6 +43,9 @@ export interface ShapeOp {
    * what the page shows (the mask makes it a gradient/shaped overlay we cannot reproduce) —
    * importers must EXCLUDE these rather than render a solid block. */
   masked?: boolean;
+  /** A near-full-page WHITE fill: the page background being re-painted. Not kept as a block,
+   * but it ERASES earlier shapes it covers (they are fully occluded in the source). */
+  bgWhite?: boolean;
 }
 
 /** A cluster of vector path ink (a logo, a QR/barcode, an icon row, a colour scale) that can't
@@ -164,7 +167,16 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
     }
     else if (isFill(fn) || isFillStroke(fn)) {
       if (pathBox && pathBox.length === 4) {
-        const { minX, maxY, w, h } = xform(pathBox);
+        let { minX, maxY, w, h } = xform(pathBox);
+        // honour the ACTIVE CLIP: the source only shows the clipped part of a fill (an unclipped
+        // capture painted e.g. a black header bar that is invisible in the original)
+        if (clip) {
+          const minY0 = maxY - h;
+          const ix0 = Math.max(minX, clip.minX), iy0 = Math.max(minY0, clip.minY);
+          const ix1 = Math.min(minX + w, clip.maxX), iy1 = Math.min(maxY, clip.maxY);
+          if (ix1 - ix0 < 2 || iy1 - iy0 < 2) { recordInk(fill); pathBox = null; pathCurves = 0; continue; }
+          minX = ix0; maxY = iy1; w = ix1 - ix0; h = iy1 - iy0;
+        }
         // significant panels. WHITE is usually the page background (skip), EXCEPT a clearly
         // bounded white card (≥60×30, not near-full-page) — those are real panels the layout
         // sits on and were disappearing in the editor.
@@ -172,13 +184,23 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
         const nearFull = w >= 0.9 * pageWidth && h >= 0.9 * pageHeight;
         if (w >= 24 && h >= 10 && (!isWhite || (w >= 60 && h >= 30 && !nearFull))) {
           shapes.push({ opIndex: i, fill, alpha: fillAlpha < 1 ? fillAlpha : undefined, masked: smaskActive || groupMaskDepth > 0 || undefined, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
+        } else if (isWhite && nearFull && fillAlpha >= 1 && !smaskActive && groupMaskDepth === 0) {
+          // page background re-painted white: record as an ERASER of earlier covered shapes
+          shapes.push({ opIndex: i, fill, bgWhite: true, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
         }
         recordInk(fill);
       }
       pathBox = null; pathCurves = 0;
     } else if (isStroke(fn)) {
       if (pathBox && pathBox.length === 4) {
-        const { minX, maxY, w, h } = xform(pathBox);
+        let { minX, maxY, w, h } = xform(pathBox);
+        if (clip) { // honour the active clip (same as fills)
+          const minY0 = maxY - h;
+          const ix0 = Math.max(minX, clip.minX), iy0 = Math.max(minY0, clip.minY);
+          const ix1 = Math.min(minX + w, clip.maxX), iy1 = Math.min(maxY, clip.maxY);
+          if (ix1 - ix0 < 1 || iy1 - iy0 < 1) { recordInk(strokeCol); pathBox = null; pathCurves = 0; continue; }
+          minX = ix0; maxY = iy1; w = ix1 - ix0; h = iy1 - iy0;
+        }
         // thin long stroke = a table rule / gridline → a thin rect of the stroke colour
         const thin = Math.min(w, h) <= 2.5;
         const long = Math.max(w, h) >= 8;

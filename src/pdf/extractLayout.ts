@@ -49,6 +49,9 @@ export function extractTextBlocks(
     // real glyph boxes are ~1.3× the nominal size (ascender+descender); a box of exactly
     // `size` visually clips descenders in the editor (measured vs PyMuPDF: true ≈ 1.38×).
     const boxH = (it.height || size) * 1.3;
+    // rotated text (a vertical sidebar like "10/2025"): angle from the text matrix. Stored on the
+    // block and rendered rotated in the editor (was drawn horizontal → overlapped the layout).
+    const angleDeg = Math.round(Math.atan2(t[1], t[0]) * 180 / Math.PI);
 
     const info = resolveFont?.(it.fontName);
     const realName = info?.name || it.fontName;
@@ -63,7 +66,8 @@ export function extractTextBlocks(
       y: round(top),
       width: round(it.width),
       height: round(boxH),
-      rotation: 0,
+      rotation: angleDeg !== 0 ? -angleDeg : 0, // CSS rotates clockwise; PDF angle is CCW
+
       zIndex: z++,
       source: 'original',
       originalBBox: { x: round(left), y: round(top), width: round(it.width), height: round(boxH) },
@@ -99,8 +103,11 @@ function isRtlText(s: string): boolean {
  * Table safety: a line that shares its y-band with another line (a table ROW with several
  * cells) is never paragraph-merged, and big horizontal gaps (column gutters) never line-merge —
  * so spec/equipment grids keep one block per cell. */
-export function clusterTextBlocks(blocks: TextBlockIR[]): TextBlockIR[] {
-  if (blocks.length < 2) return blocks;
+export function clusterTextBlocks(allBlocks: TextBlockIR[]): TextBlockIR[] {
+  // rotated runs (vertical sidebars) keep their own boxes — never merged with horizontal text
+  const rotated = allBlocks.filter((b) => b.rotation !== 0);
+  const blocks = allBlocks.filter((b) => b.rotation === 0);
+  if (blocks.length < 2) return allBlocks;
 
   // ---- phase 1: lines (union-find over same-baseline neighbours) ----
   const par = blocks.map((_, i) => i);
@@ -119,8 +126,18 @@ export function clusterTextBlocks(blocks: TextBlockIR[]): TextBlockIR[] {
   const groups = new Map<number, TextBlockIR[]>();
   blocks.forEach((b, i) => { const r = find(i); (groups.get(r) || groups.set(r, []).get(r)!).push(b); });
 
-  const mergeGroup = (grp: TextBlockIR[], joiner: string): TextBlockIR => {
-    // CONTENT order = original array order (logical); never sort by x
+  // Order runs WITHIN one line for joining. Generators differ: some emit mixed lines in LOGICAL
+  // order, others in VISUAL (left→right) order — so stream order is NOT reliable. Position is:
+  // an RTL line reads right→left, so x-DESCENDING run order == logical reading order in both
+  // cases (each run — a Hebrew word / a phone number / a Latin token — stays atomic).
+  const lineOrder = (grp: TextBlockIR[]): TextBlockIR[] => {
+    const rtl = isRtlText(grp.map((g) => g.text).join(' '));
+    const lineOf = (g: TextBlockIR) => Math.round(g.y / Math.max(4, g.fontSize * 0.7));
+    return [...grp].sort((a2, b2) => lineOf(a2) - lineOf(b2) || (rtl ? (b2.x + b2.width) - (a2.x + a2.width) : a2.x - b2.x));
+  };
+
+  const mergeGroup = (grp0: TextBlockIR[], joiner: string): TextBlockIR => {
+    const grp = joiner === ' ' ? lineOrder(grp0) : grp0;
     const longest = grp.reduce((m, b) => (b.text.length > m.text.length ? b : m), grp[0]);
     const x0 = Math.min(...grp.map((b) => b.x)), y0 = Math.min(...grp.map((b) => b.y));
     const x1 = Math.max(...grp.map((b) => b.x + b.width)), y1 = Math.max(...grp.map((b) => b.y + b.height));
@@ -175,7 +192,7 @@ export function clusterTextBlocks(blocks: TextBlockIR[]): TextBlockIR[] {
     m.lineHeight = Math.min(1.8, Math.max(1.05, Math.round(lead * 100) / 100));
     out.push(m);
   }
-  return out.sort((a, b) => a.y - b.y || a.x - b.x);
+  return [...out, ...rotated].sort((a, b) => a.y - b.y || a.x - b.x);
 }
 
 function round(n: number): number { return Math.round(n); }

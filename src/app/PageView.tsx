@@ -290,6 +290,8 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
               fontFamily: fontFamily || b.fontFamily, fontWeight: b.fontWeight,
               color: compare ? 'rgba(20,40,120,.55)' : b.color,
               whiteSpace: oneLine ? 'nowrap' : 'pre-wrap', overflow: 'hidden',
+              // rotated runs (vertical sidebars): rotate around the baseline-left point
+              ...(b.rotation ? { transform: `rotate(${b.rotation}deg)`, transformOrigin: '0 77%' } : {}),
               unicodeBidi: 'plaintext',
               textAlign: b.align === 'end' ? 'right' : b.align === 'center' ? 'center' : 'left',
               cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
