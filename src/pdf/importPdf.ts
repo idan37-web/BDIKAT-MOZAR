@@ -62,8 +62,6 @@ export async function importPdf(
     // text sits in paint order ABOVE images (captions over photos)
     textBlocks.forEach((b, i) => { b.zIndex = 1_000_000 + i; });
 
-    const overlapsBox = (a: { x: number; y: number; width: number; height: number }, b: typeof a) =>
-      !(a.x > b.x + b.width || a.x + a.width < b.x || a.y > b.y + b.height || a.y + a.height < b.y);
     const lumOf = (hex?: string) => { const m = /^#(..)(..)(..)$/.exec(hex || ''); if (!m) return 1; const [r, g, b] = [1, 2, 3].map((k) => parseInt(m[k], 16)); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
     // A dark, FULLY-OPAQUE panel painted on top of (and covering most of) an image is almost always a
     // soft-mask / transparency-group darken-overlay whose real alpha we can't read — captured solid it
@@ -79,9 +77,10 @@ export async function importPdf(
         return imArea > 0 && (ix * iy) / imArea > 0.55;
       });
     };
-    let shapeBlocks: ShapeBlockIR[] = dedupeShapes(shapeOps)
-      // an approximated gradient scrim is kept ONLY where it actually sits behind a text run
-      .filter((s) => !s.shading || textBlocks.some((t) => !t.deleted && overlapsBox(s.bbox, t)))
+    // a fill painted under a soft mask is NOT the flat colour the page shows (the mask turns it
+    // into a gradient/shaped overlay we cannot reproduce) — exclude it BEFORE dedupe so a masked
+    // duplicate can never merge into (and poison) a real panel. Same for opaque full-cover overlays.
+    let shapeBlocks: ShapeBlockIR[] = dedupeShapes(shapeOps.filter((s) => !s.masked))
       .filter((s) => !isOpaqueOverlay(s))
       .map((s, i) => ({
         id: `${id}_sh${i}`, type: 'shape', x: s.bbox.x, y: s.bbox.y, width: s.bbox.width, height: s.bbox.height,
@@ -121,6 +120,10 @@ export async function importPdf(
       }
       for (let i = 0; i < imageOps.length; i++) {
         const op = imageOps[i];
+        // an image painted inside a Luminosity soft-mask group is the MASK's own pixels (a
+        // gradient bitmap), not page content — decoding it opaque paints a solid gradient BAR
+        // over the photo. Exclude it, like masked fills.
+        if (op.masked) continue;
         let src: string | null = null;
         try { src = await resolveImage(page, op, makeCanvas); } catch { /* unresolved */ }
         if (!src && rendered) {

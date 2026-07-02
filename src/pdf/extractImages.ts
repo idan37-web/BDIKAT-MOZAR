@@ -21,6 +21,13 @@ export interface ImageOp {
   inline?: any;      // inline image object (paintInlineImageXObject)
   mask?: boolean;    // paintImageMaskXObject (stencil)
   hadSMask?: boolean;
+  /** Non-normal blend mode active when the image was painted (multiply/screen/…). A grayscale
+   * gradient painted with multiply/screen is a darken/lighten OVERLAY — decode converts its
+   * luminance to real alpha so it reproduces faithfully on any background. */
+  blend?: string;
+  /** Painted inside a Luminosity soft-mask group (these are the MASK's own pixels, not page
+   * content) or under an active gState SMask — importers must EXCLUDE these. */
+  masked?: boolean;
   /** Source-fraction window actually visible when the source PDF clipped the image (0..1). */
   crop?: { fx: number; fy: number; fw: number; fh: number };
 }
@@ -32,7 +39,10 @@ export interface ShapeOp {
   fill: string; // "#rrggbb"
   line?: boolean; // true = a stroked rule/gridline (render as a thin rect of `fill`)
   alpha?: number; // constant fill alpha (<1 = semi-transparent, e.g. a heading scrim)
-  shading?: boolean; // a gradient fill (sh) approximated as a flat scrim — kept only behind text
+  /** Painted under an active soft mask / masked transparency group. The flat fill colour is NOT
+   * what the page shows (the mask makes it a gradient/shaped overlay we cannot reproduce) —
+   * importers must EXCLUDE these rather than render a solid block. */
+  masked?: boolean;
 }
 
 /** A cluster of vector path ink (a logo, a QR/barcode, an icon row, a colour scale) that can't
@@ -67,8 +77,10 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
   type Rect4 = { minX: number; minY: number; maxX: number; maxY: number };
   let clip: Rect4 | null = null; const clipStack: (Rect4 | null)[] = [];
   let pendingClip = false; // OPS.clip seen → apply current path as clip at the next endPath/paint
-  let smaskActive = false;
+  let smaskActive = false; const smaskStack: boolean[] = [];
+  let groupMaskDepth = 0; // depth of transparency groups that carry a soft mask
   let fillAlpha = 1; const alphaStack: number[] = []; // constant fill alpha (gState 'ca')
+  let blendMode = 'normal'; const blendStack: string[] = []; // gState 'BM' (multiply/screen/…)
   let fill = '#000000';
   let strokeCol = '#000000';
   let pathBox: number[] | null = null; // [minX,minY,maxX,maxY] in path space (constructPath args[2])
@@ -115,18 +127,28 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
 
   for (let i = 0; i < fns.length; i++) {
     const fn = fns[i], a = args[i];
-    if (fn === OPS.save) { stack.push([...ctm] as Mat); clipStack.push(clip); alphaStack.push(fillAlpha); }
-    else if (fn === OPS.restore) { if (stack.length) ctm = stack.pop() as Mat; if (clipStack.length) clip = clipStack.pop() as Rect4 | null; if (alphaStack.length) fillAlpha = alphaStack.pop()!; }
+    if (fn === OPS.save) { stack.push([...ctm] as Mat); clipStack.push(clip); alphaStack.push(fillAlpha); smaskStack.push(smaskActive); blendStack.push(blendMode); }
+    else if (fn === OPS.restore) { if (stack.length) ctm = stack.pop() as Mat; if (clipStack.length) clip = clipStack.pop() as Rect4 | null; if (alphaStack.length) fillAlpha = alphaStack.pop()!; if (smaskStack.length) smaskActive = smaskStack.pop()!; if (blendStack.length) blendMode = blendStack.pop()!; }
     else if (fn === OPS.clip || fn === OPS.eoClip) { pendingClip = true; }
     else if (fn === OPS.transform) ctm = mul(ctm, a as Mat);
+    else if (fn === OPS.beginGroup) {
+      // a transparency group with a soft mask: everything painted inside is masked content
+      try { if ((a as any)?.[0]?.smask || (a as any)?.smask) groupMaskDepth++; } catch { /* ignore */ }
+    }
+    else if (fn === OPS.endGroup) { if (groupMaskDepth > 0) groupMaskDepth--; }
     else if (fn === OPS.setGState) {
       try {
-        smaskActive = JSON.stringify(a).includes('SMask') ? !JSON.stringify(a).includes('"None"') : smaskActive;
-        // gState arg is a list of [key, value] entries; 'ca' = constant fill alpha. pdf.js sometimes
-        // wraps it one level deep ([[[k,v],...]]) — unwrap so we find the pairs either way.
+        // gState arg is a list of [key, value] entries. 'ca' = constant fill alpha;
+        // 'SMask' = soft mask (null / 'None' / falsy clears it — the old string test
+        // never matched pdf.js's `null`, so smaskActive used to LEAK to page end).
         let entries: any[] = Array.isArray(a) ? (a as any[]) : [];
         if (entries.length === 1 && Array.isArray(entries[0]) && Array.isArray(entries[0][0])) entries = entries[0];
-        for (const e of entries) { if (Array.isArray(e) && e[0] === 'ca' && typeof e[1] === 'number') fillAlpha = e[1]; }
+        for (const e of entries) {
+          if (!Array.isArray(e)) continue;
+          if (e[0] === 'ca' && typeof e[1] === 'number') fillAlpha = e[1];
+          if (e[0] === 'SMask') smaskActive = !!e[1] && e[1] !== 'None';
+          if (e[0] === 'BM') { const v: any = e[1]; blendMode = String(v?.name ?? v ?? 'normal').toLowerCase(); }
+        }
       } catch { /* ignore */ }
     }
     else if (fn === OPS.setFillRGBColor) { const c = a as number[]; fill = toHex(c[0], c[1], c[2]); }
@@ -149,7 +171,7 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
         const isWhite = fill.toLowerCase() === '#ffffff';
         const nearFull = w >= 0.9 * pageWidth && h >= 0.9 * pageHeight;
         if (w >= 24 && h >= 10 && (!isWhite || (w >= 60 && h >= 30 && !nearFull))) {
-          shapes.push({ opIndex: i, fill, alpha: fillAlpha < 1 ? fillAlpha : undefined, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
+          shapes.push({ opIndex: i, fill, alpha: fillAlpha < 1 ? fillAlpha : undefined, masked: smaskActive || groupMaskDepth > 0 || undefined, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
         }
         recordInk(fill);
       }
@@ -171,19 +193,9 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
       applyPendingClip();
       pathBox = null; pathCurves = 0;
     } else if (fn === OPS.endPath) { applyPendingClip(); pathBox = null; pathCurves = 0; }
-    else if (fn === OPS.shadingFill) {
-      // a gradient fill — almost always a dark→transparent readability scrim behind a heading.
-      // We can't recover the gradient, so approximate it as a flat semi-transparent dark panel over
-      // its clip region. Kept only if it sits behind text (decided in importPdf), so it never adds
-      // a stray dark box. No clip = page-wide gradient → skip (can't bound it safely).
-      if (clip) {
-        const w = clip.maxX - clip.minX, h = clip.maxY - clip.minY;
-        const nearFull = w >= 0.95 * pageWidth && h >= 0.95 * pageHeight;
-        if (w >= 24 && h >= 10 && !nearFull) {
-          shapes.push({ opIndex: i, fill: '#0b0d12', alpha: 0.5, shading: true, bbox: { x: Math.round(clip.minX), y: Math.round(pageHeight - clip.maxY), width: Math.round(w), height: Math.round(h) } });
-        }
-      }
-    }
+    // NOTE: OPS.shadingFill (gradient) is deliberately NOT captured. A flat approximation of a
+    // gradient scrim renders as a solid bar that ruins the page; readability scrims are the
+    // user's call via the editor's manual scrim tool.
     else if (isXObj(fn) || fn === OPS.paintInlineImageXObject || fn === OPS.paintImageMaskXObject) {
       const pts = [apply(ctm, 0, 0), apply(ctm, 1, 0), apply(ctm, 1, 1), apply(ctm, 0, 1)];
       const xs = pts.map((p) => p[0]); const ys = pts.map((p) => p[1]);
@@ -204,9 +216,11 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
           bbox = { x: Math.round(ix0), y: Math.round(pageHeight - iy1), width: Math.round(vw), height: Math.round(vh) };
         }
       }
-      if (fn === OPS.paintInlineImageXObject) images.push({ opIndex: i, bbox, inline: a?.[0], hadSMask: smaskActive, crop });
-      else if (fn === OPS.paintImageMaskXObject) images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, mask: true, hadSMask: smaskActive, crop });
-      else images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, hadSMask: smaskActive, crop });
+      const blend = blendMode !== 'normal' && blendMode !== 'source-over' ? blendMode : undefined;
+      const masked = (groupMaskDepth > 0 || smaskActive) || undefined;
+      if (fn === OPS.paintInlineImageXObject) images.push({ opIndex: i, bbox, inline: a?.[0], hadSMask: smaskActive, blend, masked, crop });
+      else if (fn === OPS.paintImageMaskXObject) images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, mask: true, hadSMask: smaskActive, blend, masked, crop });
+      else images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, hadSMask: smaskActive, blend, masked, crop });
     }
   }
   return { images, shapes, graphics: clusterGraphics(ink) };
@@ -267,7 +281,7 @@ function getObj(page: any, name: string): Promise<any> {
   });
 }
 
-export function objToDataUrl(o: any, makeCanvas: MakeCanvas): string | null {
+export function objToDataUrl(o: any, makeCanvas: MakeCanvas, blend?: string): string | null {
   if (!o) return null;
   const bmp = o.bitmap ?? (typeof ImageBitmap !== 'undefined' && o instanceof ImageBitmap ? o : null);
   const W = o.width ?? bmp?.width; const H = o.height ?? bmp?.height;
@@ -291,6 +305,38 @@ export function objToDataUrl(o: any, makeCanvas: MakeCanvas): string | null {
     else return null;
     ctx.putImageData(new ImageData(rgba, W, H), 0, 0);
   } else return null;
+
+  // BLEND-MODE OVERLAY RECONSTRUCTION: a grayscale image painted with multiply/darken (or
+  // screen/lighten) is a darken(/lighten) overlay — canvas/pdf-lib can't replay the blend, so an
+  // opaque decode paints a solid gradient BAR over the photo. Convert luminance to real alpha:
+  //   multiply: out = black  @ alpha 1-lum   (white → invisible, black → dark)
+  //   screen:   out = white  @ alpha lum     (black → invisible, white → light)
+  // Faithful on any background. Applied only to near-grayscale opaque pixels (photos untouched).
+  const mode = (blend || '').toLowerCase();
+  const darkening = mode === 'multiply' || mode === 'darken';
+  const lightening = mode === 'screen' || mode === 'lighten';
+  if ((darkening || lightening) && !hasAlpha) {
+    try {
+      const img = ctx.getImageData(0, 0, W, H);
+      const d = img.data;
+      // near-grayscale check on a sample grid
+      let maxSpread = 0;
+      for (let q = 0; q < d.length; q += 4 * 97) {
+        const spread = Math.max(d[q], d[q + 1], d[q + 2]) - Math.min(d[q], d[q + 1], d[q + 2]);
+        if (spread > maxSpread) maxSpread = spread;
+      }
+      if (maxSpread <= 24) {
+        for (let q = 0; q < d.length; q += 4) {
+          const lum = (d[q] * 77 + d[q + 1] * 150 + d[q + 2] * 29) >> 8;
+          if (darkening) { d[q] = d[q + 1] = d[q + 2] = 0; d[q + 3] = 255 - lum; }
+          else { d[q] = d[q + 1] = d[q + 2] = 255; d[q + 3] = lum; }
+        }
+        ctx.putImageData(img, 0, 0);
+        hasAlpha = true;
+      }
+    } catch { /* leave as decoded */ }
+  }
+
   // keep transparency as PNG; opaque photos as smaller JPEG
   return c.toDataURL(hasAlpha ? 'image/png' : 'image/jpeg', 0.85);
 }
@@ -301,13 +347,13 @@ export async function resolveImage(page: any, op: ImageOp, makeCanvas: MakeCanva
   if (op.inline) {
     const o = op.inline;
     const norm = o.bitmap || o.data ? o : (o.width && o.height ? o : null);
-    const url = objToDataUrl(norm, makeCanvas);
+    const url = objToDataUrl(norm, makeCanvas, op.blend);
     if (url) return url;
   }
   // (ii)/(iii) named XObject or mask
   if (op.name) {
     const o = await getObj(page, op.name);
-    const url = objToDataUrl(o, makeCanvas);
+    const url = objToDataUrl(o, makeCanvas, op.blend);
     if (url) return url;
   }
   return null;
