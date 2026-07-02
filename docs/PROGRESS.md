@@ -27,7 +27,9 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
 ```
 - Deliverable to the user each round: copy `dist-single/index.html` to `AutoSpec-Studio-app.html` and send it
   (single offline file; open by double-click, or `npm run dev`, or drag to app.netlify.com/drop).
-- **No browser is available in this environment.** Verify headlessly with:
+- **A real Chromium IS available** (playwright-core + /opt/pw-browsers): `npx vite preview --port 4173 &`
+  then `node scripts/e2eSmoke.mjs [pdf]` → screenshots + a real exported PDF in `e2e-out/`. Use it to SEE
+  the app. For pure logic, verify headlessly with:
   - `npx tsx <script>.mts` running real modules over `project/uploads/**/*.pdf` (pdf.js legacy build works in Node).
   - **jsdom** (`/tmp/node_modules/jsdom`) + esbuild-bundling a tiny entry to mount React and assert DOM.
   - **@napi-rs/canvas** to render pdf.js pages / decode image objects in Node (note: it crashes on `paintChar`
