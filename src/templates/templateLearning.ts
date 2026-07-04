@@ -108,43 +108,89 @@ function regionText(blocks: TextBlockIR[], rtl: boolean): string {
   return out.trim();
 }
 
+export type GroupMode = 'para' | 'cell' | 'row';
+
+const HEB_WORD = /[֐-׿]{2,}/; // a Hebrew word = a label / section header
+/** A "label" cell holds a Hebrew field name/section header; anything else (number, V, unit,
+ * "205/55R16", a trim name) is a "value" that belongs to the row of the label on its reading-right. */
+function isLabelCell(t: string): boolean { return HEB_WORD.test(t); }
+
+/**
+ * Group a dense table's cells into ROWS. Within each y-band (a visual row), cells are read
+ * right→left (RTL); each Hebrew LABEL closes a row consisting of that label plus the value cells
+ * to its reading-left, back to the previous label. This keeps two side-by-side tables separate
+ * even though they interleave in x (the intra-table label→value gap is larger than the gap
+ * between the tables), and collapses ~3N cell boxes into ~N readable row slots.
+ */
+function clusterTableRows(texts: TextBlockIR[]): Map<number, TextBlockIR[]> {
+  const out = new Map<number, TextBlockIR[]>();
+  let key = 0;
+  const emit = (cells: TextBlockIR[]) => { if (cells.length) out.set(key++, cells); };
+  // build y-bands (a run and its same-baseline neighbours)
+  const bySorted = [...texts].map((b, i) => ({ b, i })).sort((p, q) => p.b.y - q.b.y);
+  const bands: TextBlockIR[][] = [];
+  for (const { b } of bySorted) {
+    const band = bands.find((bd) => Math.abs(bd[0].y - b.y) < Math.min(bd[0].fontSize || 10, b.fontSize || 10) * 0.6);
+    if (band) band.push(b); else bands.push([b]);
+  }
+  for (const band of bands) {
+    // reading order for an RTL row = x DESCENDING (right→left). A Hebrew LABEL OPENS a row and
+    // absorbs the value cells to its left (which come next in the walk), back to the following
+    // label. Two side-by-side tables interleave in x, but each label keeps only its OWN values
+    // (the next table's label starts a fresh row), so the tables stay separate.
+    const row = [...band].sort((a, c) => (c.x + c.width) - (a.x + a.width));
+    let current: TextBlockIR[] = [];
+    for (const cell of row) {
+      if (isLabelCell(cell.text)) { if (current.length) emit(current); current = [cell]; }
+      else current.push(cell);
+    }
+    emit(current);
+  }
+  return out;
+}
+
 /**
  * Cluster a page's text runs into regions. Two runs join when their boxes are
  * within ~1 line vertically and ~1 glyph horizontally AND have a comparable font
- * size — so a heading never merges into body copy. For DENSE table pages pass
- * `cluster=false` so every positioned cell stays its own region (the grid is then
- * reproduced at generation time instead of collapsing into a few blobs).
+ * size — so a heading never merges into body copy. Modes: 'para' clusters prose,
+ * 'row' groups dense-table cells into rows, 'cell' keeps every positioned cell separate.
  */
-export function groupRegions(page: PageIR, cluster = true): Region[] {
+export function groupRegions(page: PageIR, grouping: GroupMode = 'para'): Region[] {
   const texts = page.blocks.filter(isTextBlock);
   const images = page.blocks.filter(isImageBlock);
 
-  // union-find over text runs
-  const parent = texts.map((_, i) => i);
-  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-  const join = (i: number, j: number) => { parent[find(i)] = find(j); };
-
-  if (cluster) {
-    for (let i = 0; i < texts.length; i++) {
-      for (let j = i + 1; j < texts.length; j++) {
-        const a = texts[i];
-        const b = texts[j];
-        const fa = a.fontSize || 10;
-        const fb = b.fontSize || 10;
-        const ratio = Math.max(fa, fb) / Math.min(fa, fb);
-        if (ratio > 1.7) continue; // different typographic level
-        const { dx, dy } = gaps(a, b);
-        const f = Math.max(fa, fb);
-        if (dy <= f * 0.9 && dx <= f * 1.4) join(i, j);
+  let clusters: Map<number, TextBlockIR[]>;
+  if (grouping === 'row') {
+    // DENSE TABLE PAGE: group each row (a label + its value cells) into ONE region instead of one
+    // region per cell — so a spec/equipment table reads as ~N rows, not ~3N word-boxes, while two
+    // side-by-side tables stay separate (see clusterTableRows).
+    clusters = clusterTableRows(texts);
+  } else {
+    // union-find over text runs (mode 'para' clusters prose/paragraphs; 'cell' keeps each run)
+    const parent = texts.map((_, i) => i);
+    const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    const join = (i: number, j: number) => { parent[find(i)] = find(j); };
+    if (grouping === 'para') {
+      for (let i = 0; i < texts.length; i++) {
+        for (let j = i + 1; j < texts.length; j++) {
+          const a = texts[i];
+          const b = texts[j];
+          const fa = a.fontSize || 10;
+          const fb = b.fontSize || 10;
+          const ratio = Math.max(fa, fb) / Math.min(fa, fb);
+          if (ratio > 1.7) continue; // different typographic level
+          const { dx, dy } = gaps(a, b);
+          const f = Math.max(fa, fb);
+          if (dy <= f * 0.9 && dx <= f * 1.4) join(i, j);
+        }
       }
     }
+    clusters = new Map<number, TextBlockIR[]>();
+    texts.forEach((b, i) => {
+      const r = find(i);
+      (clusters.get(r) || clusters.set(r, []).get(r)!).push(b);
+    });
   }
-
-  const clusters = new Map<number, TextBlockIR[]>();
-  texts.forEach((b, i) => {
-    const r = find(i);
-    (clusters.get(r) || clusters.set(r, []).get(r)!).push(b);
-  });
 
   const regions: Region[] = [];
   for (const group of clusters.values()) {
@@ -230,8 +276,6 @@ export function classifyPage(
   const ev: string[] = [];
   const texts = page.blocks.filter(isTextBlock);
   const n = texts.length;
-  const small = texts.filter((t) => t.fontSize < 10).length;
-  const smallRatio = n ? small / n : 0;
   const allText = texts.map((t) => t.text).join(' ');
   const maxFont = Math.max(0, ...texts.map((t) => t.fontSize));
   const hit = (k: keyof typeof KW) => KW[k].test(allText);
@@ -252,9 +296,10 @@ export function classifyPage(
   const digitCount = (allText.match(/\d/g) || []).length;
   const unitCount = (allText.match(new RegExp(KW.units.source, 'gi')) || []).length; // GLOBAL count
   const digitRatio = digitCount / Math.max(1, allText.length); // technical spec ≈ 0.04-0.09, equipment ≈ 0.01
-  // (import-time clustering merges runs into lines/paragraphs, so a data page now lands
-  // around 30-60 blocks instead of 80+ — the density threshold reflects the clustered counts)
-  const dense = n >= 26 && smallRatio >= 0.55;
+  // Dense = a real data table: many similar-small-font runs, NO big hero image (that guard lives in
+  // isDensePage, and is what keeps a marketing spread — big hero + heading + feature prose that
+  // mentions "מערכת"/units — from being misread as a safety/spec DATA page).
+  const dense = isDensePage(page);
   // heritage/timeline narrative: dense small text whose "numbers" are YEARS, with almost no
   // measurement units — a brand-story page, NOT a data table (was misclassified as spec).
   const yearCount = (allText.match(/\b(19|20)\d{2}\b/g) || []).length;
@@ -320,15 +365,18 @@ function slotKind(role: PageRole, r: Region, isLargestText: boolean, early = fal
     return role === 'cover' || role === 'feature' ? 'hero-image' : 'image';
   }
   const t = r.text || '';
-  // EARLY pages (everything before the data/equipment tables) only carry: cover/hero imagery,
-  // headings, model name, marketing copy — and, occasionally, a legal disclaimer at the very
-  // bottom. Spec/equipment/safety/colours/wheels/pollution/price can ONLY live in/under the
-  // tables, so never assign them here (fixes "marketing text → equipment/legal/pollution").
-  if (early) {
+  // MARKETING pages (cover / feature / content / interior) and EARLY pages (before the first data
+  // table) only carry cover/hero imagery, headings, model name, marketing copy — and occasionally a
+  // legal disclaimer at the bottom. The data kinds (spec/equipment/safety/colours/wheels/pollution/
+  // price) can ONLY live on their own data pages, so never assign them here even when the marketing
+  // copy happens to mention a "מערכת"/unit/number (fixes "feature spread → spec-table/safety/equipment").
+  if (early || MARKETING_ROLES.has(role)) {
     const nearBottom = pageHeight > 0 && r.bbox.y > pageHeight * 0.8;
     if (KW.legal.test(t) && t.length > 60 && nearBottom) return 'legal';
     if (role === 'cover' && isLargestText) return 'model-name';
     if (isLargestText && r.maxFont >= 18) return 'heading';
+    // a mid-size lead line on a marketing page is a sub-heading, not body copy
+    if (r.maxFont >= 22 && r.weight >= 600) return 'heading';
     return 'marketing-text';
   }
   // strong content signals win regardless of the page role
@@ -376,6 +424,10 @@ export const SLOT_LABEL: Record<SlotKind, string> = {
  * NOTE: 'background' is NOT here — a shape's fixed/dynamic is decided by cross-doc
  * evidence so a per-model accent strip (fill differs across models) is caught as dynamic. */
 const FIXED_KINDS = new Set<SlotKind>(['legal', 'logo']);
+
+/** Page roles that carry marketing content only — never per-model data tables. On these, region
+ * kinds are limited to heading/model-name/marketing/hero/logo/legal (data kinds are page-gated). */
+const MARKETING_ROLES = new Set<PageRole>(['cover', 'feature', 'content', 'interior']);
 
 function styleOf(r: Region): SlotStyle | undefined {
   if (r.blockType !== 'text') return undefined;
@@ -482,7 +534,12 @@ function buildSlot(
 function isDensePage(page: PageIR): boolean {
   const texts = page.blocks.filter(isTextBlock);
   if (texts.length < 26) return false;
-  const small = texts.filter((t) => t.fontSize < 10).length;
+  // "small" is RELATIVE to the page's own heading size, not an absolute point size — a 1920×1080
+  // deck's table body is ~15pt while a print-spread's is ~8pt, but both sit well under the page's
+  // big heading. (An absolute `<10` missed the deck's spec tables entirely → columns blobbed.)
+  const maxFont = Math.max(0, ...texts.map((t) => t.fontSize));
+  const smallThresh = Math.max(11, maxFont * 0.45);
+  const small = texts.filter((t) => t.fontSize < smallThresh).length;
   if (small / texts.length < 0.55) return false;
   // timeline/heritage narrative (years, no measurement units) is prose, not a grid — cluster it
   const allText = texts.map((t) => t.text).join(' ');
@@ -493,9 +550,17 @@ function isDensePage(page: PageIR): boolean {
   // text-dense — so we DON'T treat it as a grid. That lets its paragraphs cluster into ONE slot
   // each, instead of one slot per wrapped line. (Real spec tables have no big hero image.)
   const pageArea = page.width * page.height;
-  const bigImage = page.blocks.filter(isImageBlock).some((im) => im.width * im.height >= pageArea * 0.22);
+  const imgs = page.blocks.filter(isImageBlock);
+  const bigImage = imgs.some((im) => im.width * im.height >= pageArea * 0.22);
+  const totalImg = imgs.reduce((s, im) => s + im.width * im.height, 0);
   const bigHeading = texts.some((t) => t.fontSize >= 18);
-  if (bigImage && bigHeading) return false;
+  // A hero spread — ONE big image, OR SEVERAL medium images covering a quarter+ of the page — plus
+  // a heading is a MARKETING page, not a data table (even when the copy mentions systems/units).
+  // (The single-image test alone missed 4-up feature spreads → they became "safety" data pages.)
+  if ((bigImage || totalImg >= pageArea * 0.25) && bigHeading) return false;
+  // Narrative/marketing prose: many long sentences (≥8 words) rather than short table cells.
+  const prose = texts.filter((t) => t.text.trim().split(/\s+/).length >= 8).length;
+  if (prose >= 4 && prose >= texts.length * 0.22) return false;
   return true;
 }
 
@@ -535,15 +600,20 @@ export function learnTemplate(docs: DocumentIR[], opts: LearnOptions = {}): Temp
   const modelTokens = opts.modelTokens
     || docs.map(modelTokenFromCover).filter((t): t is string => !!t);
 
-  // pre-group every doc's pages into regions once
-  const docRegions = docs.map((d) => d.pages.map((p) => groupRegions(p, !isDensePage(p))));
-  const baseRegions = docRegions[0];
   const maxPages = base.pages.length;
+  const DATA_ROLES = new Set<PageRole>(['spec', 'safety', 'colors', 'wheels', 'price']);
+  const isLineShape = (r: Region) => r.blockType === 'shape' && Math.min(r.bbox.width, r.bbox.height) <= 3;
+
+  // Grouping mode per page: a genuinely dense DATA TABLE groups into label→value ROWS; everything
+  // else (marketing spreads, narrative) clusters as paragraphs. isDensePage carries the guards that
+  // keep an image-heavy or prose marketing page — even one that mentions systems/units — OUT of
+  // row mode, so its paragraphs don't shatter into per-line boxes.
+  const docRegions = docs.map((d) => d.pages.map((p) => groupRegions(p, isDensePage(p) ? 'row' : 'para')));
+  const baseRegions = docRegions[0];
 
   // Pre-pass: roles for every page, so we know where the DATA tables begin. Everything before the
   // first spec/equipment/colours/wheels/price page is an "early" (cover + marketing) page.
-  const DATA_ROLES = new Set<PageRole>(['spec', 'safety', 'colors', 'wheels', 'price']);
-  const pageRoles = base.pages.map((p, pi) => classifyPage(p, baseRegions[pi].filter((r) => !(r.blockType === 'shape' && Math.min(r.bbox.width, r.bbox.height) <= 3)), pi, maxPages).role);
+  const pageRoles = base.pages.map((p, pi) => classifyPage(p, baseRegions[pi].filter((r) => !isLineShape(r)), pi, maxPages).role);
   let firstDataIdx = pageRoles.findIndex((r) => DATA_ROLES.has(r));
   if (firstDataIdx < 0) firstDataIdx = maxPages;
 

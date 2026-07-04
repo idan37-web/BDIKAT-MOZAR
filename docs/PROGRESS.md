@@ -75,6 +75,26 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
 - ✅ **9 — persistence + PWA/offline** — IndexedDB library/projects (Milestone C) **+ this round's PWA layer**
   (see "Round 11"). `npm run verify:persistence` + `npm run verify:pwa`.
 
+## Round 13 — template-learning quality: misclassification + table/paragraph fragmentation
+User feedback: learning mis-assigned regions and split a paragraph/table into many line/word boxes.
+Diagnosed on real PDFs (rendered with PyMuPDF, trusted pixels), fixed at the root:
+- **Data kinds gated to data pages** (`slotKind`): a `spec-table`/`safety`/`equipment`/`colors`/…
+  kind is assigned only on an actual data-role page. Marketing/feature/cover/interior pages
+  (`MARKETING_ROLES`) get heading/model-name/marketing/hero/logo/legal only — even when the copy
+  mentions "מערכת"/units/numbers (fixed a 4-up safety FEATURE spread being tagged spec-table/safety).
+- **Table cells → rows** (`groupRegions` new `'row'` mode + `clusterTableRows`): a dense table now
+  groups into label→value ROWS instead of ~3N word-cells or column blobs. Robust to two side-by-side
+  RTL tables that INTERLEAVE in x (measured: intra-table label→value gap > the gap between tables) —
+  a Hebrew label OPENS a row and absorbs the value cells to its reading-left, back to the next label,
+  so each table keeps its own values. Section headers stay their own rows.
+- **Dense detection made format-relative + marketing-proof** (`isDensePage`): "small font" is now
+  relative to the page's heading (a 1920×1080 deck's 15pt body was missed by the old absolute `<10`,
+  so its spec tables blobbed into columns); and a page is NOT dense when images cover ≥25% of it (any
+  number of hero images, not just one ≥22%) or it is mostly long-sentence prose. `classifyPage` now
+  shares this `isDensePage` verdict, so image/prose marketing pages stop being read as safety/spec.
+- Verified visually (learn overlays on Citroën C3 p8 feature + p9 spec) and headlessly: all 11
+  `verify:*` gates still pass; `tsc` clean; both builds green.
+
 ## Round 12 — real text colours (op-list) + headless photo path (open follow-ups closed)
 Closed the two "open follow-ups" that were left as non-blockers:
 - **Real per-run text colour from the op-list** (`extractImages.walkPage`): tracks the text matrix
