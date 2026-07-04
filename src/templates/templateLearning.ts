@@ -546,17 +546,20 @@ function isDensePage(page: PageIR): boolean {
   const years = (allText.match(/\b(19|20)\d{2}\b/g) || []).length;
   const units = (allText.match(KW.units) || []).length;
   if (years >= 4 && units <= 1) return false;
-  // A marketing spread (a large hero image + a big heading) is NOT a data table even when it is
-  // text-dense — so we DON'T treat it as a grid. That lets its paragraphs cluster into ONE slot
-  // each, instead of one slot per wrapped line. (Real spec tables have no big hero image.)
+  // PRIMARY table signal: a GRID OF SHORT CELLS. A real spec/equipment table is mostly short runs
+  // (labels + values), so this wins even when the page carries a big DIMENSION DIAGRAM (a car-
+  // dimensions image is 30-40% of a spec page — the marketing-image guard below would wrongly
+  // demote it). Marketing prose fails this (its runs are multi-word sentences).
+  const shortCells = texts.filter((t) => t.text.trim().split(/\s+/).length <= 4).length;
+  if (shortCells >= texts.length * 0.6) return true;
+  // Otherwise a hero spread — ONE big image, OR SEVERAL medium images covering a quarter+ of the
+  // page — plus a heading is a MARKETING page, not a data table (even when the copy mentions
+  // systems/units). (The single-image test alone missed 4-up feature spreads → "safety" data pages.)
   const pageArea = page.width * page.height;
   const imgs = page.blocks.filter(isImageBlock);
   const bigImage = imgs.some((im) => im.width * im.height >= pageArea * 0.22);
   const totalImg = imgs.reduce((s, im) => s + im.width * im.height, 0);
   const bigHeading = texts.some((t) => t.fontSize >= 18);
-  // A hero spread — ONE big image, OR SEVERAL medium images covering a quarter+ of the page — plus
-  // a heading is a MARKETING page, not a data table (even when the copy mentions systems/units).
-  // (The single-image test alone missed 4-up feature spreads → they became "safety" data pages.)
   if ((bigImage || totalImg >= pageArea * 0.25) && bigHeading) return false;
   // Narrative/marketing prose: many long sentences (≥8 words) rather than short table cells.
   const prose = texts.filter((t) => t.text.trim().split(/\s+/).length >= 8).length;

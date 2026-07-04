@@ -94,6 +94,18 @@ Diagnosed on real PDFs (rendered with PyMuPDF, trusted pixels), fixed at the roo
   shares this `isDensePage` verdict, so image/prose marketing pages stop being read as safety/spec.
 - Verified visually (learn overlays on Citroën C3 p8 feature + p9 spec) and headlessly: all 11
   `verify:*` gates still pass; `tsc` clean; both builds green.
+- **Cross-catalog check (root vs C3-only)**: ran the same failure metrics over 9 catalogs (Peugeot
+  208/3008/5008/Rifter/Boxer, Citroën C3/C3-Aircross/C5-Aircross/Berlingo). Result: **data-kind
+  leakage onto marketing pages = 0 everywhere** (kind fix is general); **column-blobbing = 0 on
+  7/9**. Fixed a self-inflicted regression along the way — the marketing-image guard was demoting
+  SPEC pages that carry a big dimension DIAGRAM (30-40% image area, e.g. 208 p5, Boxer p2) out of
+  row mode; added a **grid-of-short-cells primary signal** (`shortCells ≥ 60%` ⇒ dense table) that
+  wins over the image guard. Remaining residuals are HONEST limitations, not C3 overfit: (a) a
+  couple of heritage/timeline pages are mis-ROLED (e.g. C3-Aircross p1 → price) — text still
+  clusters fine, only the role label is off; (b) a MATRIX table (trims as columns, bare-value grid,
+  e.g. C5-Aircross p10) still blobs — the label↔value row-pairing doesn't model a pure value matrix.
+  Both are correctable in the review UI / AI-assist; full row×col table-structure detection is the
+  next step if needed.
 
 ## Round 12 — real text colours (op-list) + headless photo path (open follow-ups closed)
 Closed the two "open follow-ups" that were left as non-blockers:
