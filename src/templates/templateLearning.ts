@@ -387,15 +387,30 @@ function slotKind(role: PageRole, r: Region, isLargestText: boolean, early = fal
   return 'marketing-text';
 }
 
-/** Kind for a whole detected table: numeric grid → spec-table; feature grid → equipment (unless the
- * page role clearly says colours/wheels/safety). Content wins over the page role. */
+/** A cell that is a standalone NUMBER value (a spec datum: "1,199", "44", "136/5,500", "20.9") —
+ * NOT a checkmark (that is an equipment "has" marker) and NOT a feature sentence that merely starts
+ * with a digit ("4 שקעי USB…"). The whole cell must be number+punctuation, nothing else. */
+function isSpecValue(c: string): boolean {
+  const s = c.trim();
+  if (!s) return false;
+  return /\d/.test(s) && s.replace(/[\d.,:/%+\-\s()]/g, '').length === 0 && s.length <= 12;
+}
+
+/** Kind for a whole detected table. The GENERAL rule (no per-catalog tuning): a SPEC table has a
+ * VALUE COLUMN filled with standalone numbers across most of its data rows. An EQUIPMENT/feature
+ * list has no such column — even when some feature sentences contain a number ("4 שקעי USB", "7
+ * מושבים") or a per-trim checkmark. Content decides; the page role is only a tie-breaker. */
 function tableKind(role: PageRole, r: Region): SlotKind {
   const t = r.text || '';
-  // numeric = value cells that carry actual NUMBERS. A checkmark-only (V per trim) grid is an
-  // EQUIPMENT list, not the technical spec — the user-reported "אבזור מזוהה כמפרט טכני" bug.
-  let vals = 0, digits = 0;
-  for (const row of r.table?.rows || []) for (const c of row.cells.slice(1)) if (c.trim()) { vals++; if (/\d/.test(c) && c.replace(/[\d.,/%+\-\s()x×]/gi, '').length <= 2) digits++; }
-  const numeric = digits >= Math.max(3, vals * 0.3);
+  const rows = r.table?.rows || [];
+  const cols = r.table?.columns || 1;
+  const dataRows = rows.filter((row) => row.kind === 'data');
+  // is there a value column that is DENSELY numeric (≥40% of data rows have a standalone number)?
+  let numeric = false;
+  for (let j = 1; j < cols && !numeric; j++) {
+    const numInCol = dataRows.filter((row) => isSpecValue(row.cells[j] || '')).length;
+    if (dataRows.length >= 4 && numInCol >= dataRows.length * 0.4) numeric = true;
+  }
   // a numeric grid is the technical SPEC table (it may mention tyres/צמיגים or wheelbase/בסיס גלגלים
   // in one row — that must not hijack the whole table to 'wheels'); non-numeric grids go by keyword.
   if (numeric) return 'spec-table';
