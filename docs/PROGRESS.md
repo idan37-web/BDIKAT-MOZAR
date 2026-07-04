@@ -75,6 +75,30 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
 - ✅ **9 — persistence + PWA/offline** — IndexedDB library/projects (Milestone C) **+ this round's PWA layer**
   (see "Round 11"). `npm run verify:persistence` + `npm run verify:pwa`.
 
+## Round 14 — ROOT table fix: reconstruct whole tables (not row-by-row) + heritage/yellow
+User feedback on the real Opel Frontera catalog: (a) equipment table read as spec-table, (b) the
+spec table still detected row-by-row (Round 13's rows weren't enough — wanted ONE table), (c) yellow
+section-band bleeds over the whole table in the editor, (d) heritage pages mis-roled. Root fixes:
+- **`src/templates/tableDetect.ts`** — reconstruct a page's TABLES (rows × columns) from positioned
+  cells and emit ONE editable `table` slot per table (backed by the existing Milestone-D
+  `TableBlockIR`), not a box per cell/row. Robust column clustering by a STABLE right-edge anchor
+  (running average — the naive expanding-bbox version ran away and swallowed the page); tables split
+  by pairing each Hebrew LABEL column with the value columns to its reading-left (keeps two
+  interleaved side-by-side tables separate); sparse outlier columns (a car's dimension callouts) and
+  big TITLE cells (the page heading) are excluded so they don't bloat/absorb into the grid.
+- **SlotSpec gains `blockType:'table'` + a `table` payload**; `generateCatalog` emits a `TableBlockIR`
+  (white `cellBg`, RTL) → opens in the SAME editor and exports via the SAME vector pipeline.
+  Pixel-confirmed: generated C3 spec page renders as two clean RTL label→value tables.
+- **`tableKind`**: numeric grid ⇒ `spec-table`; a checkmark-only (V-per-trim) grid ⇒ `equipment`
+  (fixes "אבזור → מפרט טכני"); a tyre/wheelbase row no longer hijacks the whole table to `wheels`.
+- **Yellow bleed** (`extractImages`): white cell-fills painted ON TOP of a coloured section band were
+  dropped as "background", so the band showed through the whole column in the editor. Now a white
+  fill that OCCLUDES an earlier coloured panel is kept.
+- **Role fixes**: heritage/timeline (years, few units) ⇒ `feature` and wins over the data branches;
+  a lone ₪ in prose no longer ⇒ `price` (needs ≥2 price cues); a colours list keeps `colors`.
+- Verified across 6 catalogs; all 11 `verify:*` gates pass (`verify:learn` now asserts whole-table
+  slots, not per-cell); `tsc` clean; both builds green.
+
 ## Round 13 — template-learning quality: misclassification + table/paragraph fragmentation
 User feedback: learning mis-assigned regions and split a paragraph/table into many line/word boxes.
 Diagnosed on real PDFs (rendered with PyMuPDF, trusted pixels), fixed at the root:

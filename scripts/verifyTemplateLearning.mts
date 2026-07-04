@@ -33,11 +33,15 @@ expect('cover has dynamic model-name (cross-doc)', !!model && model.dynamic && m
 
 const specPages = tpl.pages.filter((p) => p.role === 'spec');
 expect('found spec page(s)', specPages.length > 0);
-// table cells are preserved as positioned slots (so generation reproduces the grid)
-expect('spec page preserves positioned table cells', specPages.some((p) => p.slots.filter((s) => s.kind === 'spec-table').length > 10));
-// cross-doc evidence: column labels FIXED, per-model values DYNAMIC, within the same table
-expect('spec table has both fixed labels and dynamic values', specPages.some((p) =>
-  p.slots.some((s) => s.kind === 'spec-table' && s.dynamic) && p.slots.some((s) => s.kind === 'spec-table' && !s.dynamic)));
+// Round 14: a spec page is reconstructed into whole TABLE slots (one per table), not a box per
+// cell/row — so the review shows "a table", and generation emits an editable TableBlockIR.
+const specTables = specPages.flatMap((p) => p.slots).filter((s) => s.blockType === 'table' && s.kind === 'spec-table');
+expect('spec page → whole spec-table slot(s)', specTables.length > 0);
+expect('spec table has real rows × columns', specTables.some((s) => (s.table?.rows.length || 0) >= 6 && (s.table?.columns || 0) >= 2));
+expect('spec table has label + value cells (a real grid)', specTables.some((s) =>
+  s.table!.rows.some((r) => r.kind === 'data' && r.cells.length >= 2 && r.cells[0] && r.cells[1])));
+// consolidation: a spec page is now a handful of table/heading slots, not dozens of cell boxes
+expect('spec page consolidated (few slots, not per-cell)', specPages.every((p) => p.slots.filter((s) => s.blockType === 'text' || s.blockType === 'table').length < 12));
 
 const back = tpl.pages.find((p) => p.role === 'back');
 expect('found back/legal page', !!back);

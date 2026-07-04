@@ -5,7 +5,7 @@
 //  - dynamic slots emit the user's bound content (text or image), or fall back to the
 //    learned sample as an editable placeholder.
 import type {
-  BlockIR, DocumentIR, ImageBlockIR, PageIR, TextBlockIR, ShapeBlockIR,
+  BlockIR, DocumentIR, ImageBlockIR, PageIR, TextBlockIR, ShapeBlockIR, TableBlockIR,
 } from '../types/catalog';
 import type { SlotKind, SlotSpec, TemplateSpec } from '../templates/templateSpec';
 
@@ -120,6 +120,19 @@ function makeShapeBlock(slot: SlotSpec, binding: SlotBinding | undefined, z: num
   };
 }
 
+function makeTableBlock(slot: SlotSpec, z: number, fallbackColor: string): TableBlockIR {
+  const t = slot.table!;
+  return {
+    id: `${slot.id}_b`, type: 'table',
+    x: slot.bbox.x, y: slot.bbox.y, width: slot.bbox.width, height: slot.bbox.height,
+    rotation: 0, zIndex: z, source: 'generated',
+    originalBBox: { ...slot.bbox },
+    columns: t.columns, colFractions: t.colFractions, rows: t.rows,
+    rowHeight: t.rowHeight, fontFamily: t.fontFamily || 'sans-serif', fontSize: t.fontSize,
+    color: t.color || fallbackColor, gridColor: '#d7dade', cellBg: '#ffffff', direction: 'rtl',
+  };
+}
+
 export interface GenerateOptions {
   title?: string;
   /** Default text colour when a slot carries no learned colour. */
@@ -152,6 +165,10 @@ export function generateCatalog(
     tp.slots.forEach((slot, i) => {
       if (slot.ignored) return;
       if (slot.blockType === 'image') blocks.push(makeImageBlock(slot, bindings[slot.key], 1_000 + i));
+    });
+    tp.slots.forEach((slot, i) => {
+      if (slot.ignored || !slot.table) return;
+      if (slot.blockType === 'table') blocks.push(makeTableBlock(slot, 900_000 + i, fallbackColor));
     });
     tp.slots.forEach((slot, i) => {
       if (slot.ignored) return;

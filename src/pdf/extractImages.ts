@@ -201,12 +201,21 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
           if (ix1 - ix0 < 2 || iy1 - iy0 < 2) { recordInk(fill); pathBox = null; pathCurves = 0; continue; }
           minX = ix0; maxY = iy1; w = ix1 - ix0; h = iy1 - iy0;
         }
-        // significant panels. WHITE is usually the page background (skip), EXCEPT a clearly
-        // bounded white card (≥60×30, not near-full-page) — those are real panels the layout
-        // sits on and were disappearing in the editor.
+        // significant panels. WHITE is usually the page background (skip), EXCEPT (a) a clearly
+        // bounded white card (≥60×30, not near-full-page) — real panels the layout sits on — or
+        // (b) a white fill painted ON TOP of an earlier coloured fill it overlaps: an OCCLUDER
+        // (e.g. white row-fills over a section-highlight band; dropping them smeared the band
+        // over the whole table in the editor — the "yellow bleed" bug).
         const isWhite = fill.toLowerCase() === '#ffffff';
         const nearFull = w >= 0.9 * pageWidth && h >= 0.9 * pageHeight;
-        if (w >= 24 && h >= 10 && (!isWhite || (w >= 60 && h >= 30 && !nearFull))) {
+        const x0 = Math.round(minX), y0 = Math.round(pageHeight - maxY), w0 = Math.round(w), h0 = Math.round(h);
+        const occludes = isWhite && !nearFull && shapes.some((s) => {
+          if (s.bgWhite || s.line || s.fill.toLowerCase() === '#ffffff') return false;
+          const ix = Math.max(0, Math.min(x0 + w0, s.bbox.x + s.bbox.width) - Math.max(x0, s.bbox.x));
+          const iy = Math.max(0, Math.min(y0 + h0, s.bbox.y + s.bbox.height) - Math.max(y0, s.bbox.y));
+          return ix * iy > w0 * h0 * 0.5; // covers mostly-inside an earlier coloured panel
+        });
+        if (w >= 24 && h >= 10 && (!isWhite || occludes || (w >= 60 && h >= 30 && !nearFull))) {
           shapes.push({ opIndex: i, fill, alpha: fillAlpha < 1 ? fillAlpha : undefined, masked: smaskActive || groupMaskDepth > 0 || undefined, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
         } else if (isWhite && nearFull && fillAlpha >= 1 && !smaskActive && groupMaskDepth === 0) {
           // page background re-painted white: record as an ERASER of earlier covered shapes

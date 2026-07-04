@@ -3,7 +3,20 @@
 // page skeleton, NEVER a picture of a page (per the brief: content · design ·
 // data stay separated). It is derived from the IR and saved as plain JSON so the
 // user can review/correct it, and Stage 7 (generation) can fill it.
-import type { BBox, TextAlign, TextDirection } from '../types/catalog';
+import type { BBox, TableRowIR, TextAlign, TextDirection } from '../types/catalog';
+
+/** A learned table's structure (Round 14) — a slot's `table` payload. Mirrors TableBlockIR
+ * minus geometry (the slot's bbox carries geometry), so a spec/equipment table is one editable
+ * table slot instead of a box per cell. */
+export interface SlotTable {
+  columns: number;
+  colFractions: number[];
+  rows: TableRowIR[];
+  rowHeight: number;
+  fontSize: number;
+  color: string;
+  fontFamily: string;
+}
 
 /** Repeated page roles across a same-family catalog. */
 export type PageRole =
@@ -54,7 +67,9 @@ export interface SlotSpec {
   key: string;
   kind: SlotKind;
   /** Block type the slot generates. */
-  blockType: 'text' | 'image' | 'shape';
+  blockType: 'text' | 'image' | 'shape' | 'table';
+  /** table slots only: the reconstructed grid (rows × columns). */
+  table?: SlotTable;
   /** Shape slots only: fill colour "#rrggbb" (a per-model accent when dynamic). */
   fill?: string;
   /** true = filled per catalog (model name, hero, values); false = fixed brand element. */
