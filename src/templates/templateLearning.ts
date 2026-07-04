@@ -598,8 +598,17 @@ export function learnTemplate(docs: DocumentIR[], opts: LearnOptions = {}): Temp
 
   // tokens: accent is per-model (brief) — flag dynamic if text colour varied
   const allColors = docRegions.flat().flat().filter((r) => r.blockType === 'text').map((r) => r.color);
+  // real accent candidate: the dominant SATURATED (non-gray, non-black/white) text colour across
+  // docs, now that text colours are exact from the op-list. Undefined if the copy is all neutral.
+  const isSat = (hex?: string) => {
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || ''); if (!m) return false;
+    const [r, g, b] = [1, 2, 3].map((k) => parseInt(m[k], 16));
+    return Math.max(r, g, b) - Math.min(r, g, b) > 40 && Math.max(r, g, b) > 60;
+  };
+  const accentColors = allColors.filter(isSat);
   const tokens = {
     text: mode(allColors.length ? allColors : ['#111418']),
+    accent: accentColors.length ? mode(accentColors) : undefined,
     accentDynamic: true, // per the brief: brand.accent is a per-model token
     fonts: collectFonts(docRegions),
   };

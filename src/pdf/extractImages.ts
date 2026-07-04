@@ -56,7 +56,12 @@ export interface GraphicOp {
   opCount: number;
 }
 
-export interface PageOps { images: ImageOp[]; shapes: ShapeOp[]; graphics: GraphicOp[]; }
+/** The exact fill colour in force when a text run was shown, at its baseline origin
+ * (top-left, PDF points). getTextContent carries no colour; importers match these to the
+ * extracted text blocks to recover REAL colours — headless too (no raster needed). */
+export interface TextColorSpan { x: number; y: number; fill: string; }
+
+export interface PageOps { images: ImageOp[]; shapes: ShapeOp[]; graphics: GraphicOp[]; textColors: TextColorSpan[]; }
 
 export type MakeCanvas = (w: number, h: number) => HTMLCanvasElement;
 
@@ -88,8 +93,17 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
   let strokeCol = '#000000';
   let pathBox: number[] | null = null; // [minX,minY,maxX,maxY] in path space (constructPath args[2])
   let pathCurves = 0;                  // bezier segments in the current path (logo detector)
+  // text state (for recovering each run's real colour) — reset by BT, unaffected by q/Q
+  let tm: Mat = [...IDENT] as Mat; let tlm: Mat = [...IDENT] as Mat; let leading = 0; let textRender = 0;
+  const translate = (tx: number, ty: number): Mat => [1, 0, 0, 1, tx, ty];
   const images: ImageOp[] = [];
   const shapes: ShapeOp[] = [];
+  const textColors: TextColorSpan[] = [];
+  const recordText = () => {
+    if (textRender === 3 || textRender === 7) return; // invisible text (OCR layer) — ignore
+    const m = mul(ctm, tm); // baseline origin = apply(m, 0, 0) = (m4, m5)
+    textColors.push({ x: m[4], y: pageHeight - m[5], fill });
+  };
   // "graphic ink": small/curvy vector path boxes (top-left coords) → clustered into GraphicOps
   const ink: { x: number; y: number; w: number; h: number; curves: number; colored: boolean }[] = [];
   const isSat = (hex: string) => {
@@ -154,6 +168,16 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
         }
       } catch { /* ignore */ }
     }
+    // --- text matrix state (for per-run colour) ---
+    else if (fn === OPS.beginText) { tm = [...IDENT] as Mat; tlm = [...IDENT] as Mat; }
+    else if (fn === OPS.setTextMatrix) { tm = [...(a as Mat)] as Mat; tlm = [...(a as Mat)] as Mat; }
+    else if (fn === OPS.setLeading) { leading = (a as number[])[0]; }
+    else if (fn === OPS.setTextRenderingMode) { textRender = (a as number[])[0]; }
+    else if (fn === OPS.moveText) { const [tx, ty] = a as number[]; tlm = mul(tlm, translate(tx, ty)); tm = [...tlm] as Mat; }
+    else if (fn === OPS.setLeadingMoveText) { const [tx, ty] = a as number[]; leading = -ty; tlm = mul(tlm, translate(tx, ty)); tm = [...tlm] as Mat; }
+    else if (fn === OPS.nextLine) { tlm = mul(tlm, translate(0, -leading)); tm = [...tlm] as Mat; }
+    else if (fn === OPS.showText || fn === OPS.showSpacedText) { recordText(); }
+    else if (fn === OPS.nextLineShowText || fn === OPS.nextLineSetSpacingShowText) { tlm = mul(tlm, translate(0, -leading)); tm = [...tlm] as Mat; recordText(); }
     else if (fn === OPS.setFillRGBColor) { const c = a as number[]; fill = toHex(c[0], c[1], c[2]); }
     else if (fn === OPS.setFillGray) { const g = (a as number[])[0]; const v = g <= 1 ? g * 255 : g; fill = toHex(v, v, v); }
     else if (fn === OPS.setFillCMYKColor) { const [c, m, y, k] = a as number[]; const [r, g, b] = cmykToRgb(c, m, y, k); fill = toHex(r, g, b); }
@@ -245,7 +269,7 @@ export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidt
       else images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, hadSMask: smaskActive, blend, masked, crop });
     }
   }
-  return { images, shapes, graphics: clusterGraphics(ink) };
+  return { images, shapes, graphics: clusterGraphics(ink), textColors };
 }
 
 type Ink = { x: number; y: number; w: number; h: number; curves: number; colored: boolean };

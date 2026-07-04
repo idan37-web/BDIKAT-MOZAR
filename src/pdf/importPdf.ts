@@ -48,7 +48,7 @@ export async function importPdf(
     // so design panels/strips are captured even in a headless (renderPreviews:false) import.
     // Running it BEFORE text extraction also populates page.commonObjs with the fonts, so we
     // can resolve each item's REAL font name (→ correct bold detection).
-    const { images: imageOps, shapes: shapeOps, graphics: graphicOps } = await walkPage(page, (pdfjs as any).OPS, vp.height, vp.width);
+    const { images: imageOps, shapes: shapeOps, graphics: graphicOps, textColors } = await walkPage(page, (pdfjs as any).OPS, vp.height, vp.width);
 
     const resolveFont = (loadedName?: string): { name?: string; bold?: boolean } | undefined => {
       if (!loadedName) return undefined;
@@ -109,6 +109,12 @@ export async function importPdf(
         fill: s.fill, opacity: s.alpha,
       }));
 
+    // PRIMARY text colour: the EXACT fill in force when each run was drawn (from the op-list),
+    // matched to the clustered blocks by baseline position. Works headless (no raster) and is
+    // exact where the browser raster sampler only approximates. Raster sampling (below, browser
+    // only) then fills any block this didn't match (e.g. Type3 / path-drawn text).
+    const opColored = assignOpListColors(textBlocks, textColors, shapeBlocks, imageOps);
+
     let previewImage: string | undefined;
     const imageBlocks: ImageBlockIR[] = [];
     const browser = typeof window !== 'undefined';
@@ -129,7 +135,7 @@ export async function importPdf(
           !(t.x > b.x + b.width || t.x + t.width < b.x || t.y > b.y + b.height || t.y + t.height < b.y);
         const lum = (hex: string) => { const m = /^#(..)(..)(..)$/.exec(hex); if (!m) return 0; const [r, g, bl] = [1, 2, 3].map((k) => parseInt(m[k], 16)); return (0.299 * r + 0.587 * g + 0.114 * bl) / 255; };
         for (const b of textBlocks) {
-          if (b.deleted) continue;
+          if (b.deleted || opColored.has(b.id)) continue; // op-list gave the exact colour already
           const col = sampleInkColor(rendered.canvas, rendered.scale, b);
           if (!col) continue;
           // a near-white colour only makes sense over a captured dark backdrop (shape/image); else
@@ -264,6 +270,39 @@ export async function importPdf(
     brand,
     pages,
   };
+}
+
+/**
+ * Assign each text block its REAL colour from the op-list colour spans (exact fill in force at
+ * the run's baseline), matched by position. Additive: only sets a colour when a span falls inside
+ * the block; near-white is kept only over a captured dark backdrop (else it would be invisible).
+ * Returns the ids that got a colour, so the raster sampler can skip them. No raster needed.
+ */
+function assignOpListColors(
+  blocks: { id: string; x: number; y: number; width: number; height: number; color?: string; deleted?: boolean }[],
+  spans: { x: number; y: number; fill: string }[],
+  shapes: ShapeBlockIR[],
+  imageOps: { bbox: BBox }[],
+): Set<string> {
+  const done = new Set<string>();
+  if (!spans.length) return done;
+  const lum = (hex: string) => { const m = /^#(..)(..)(..)$/.exec(hex); if (!m) return 0; const [r, g, b] = [1, 2, 3].map((k) => parseInt(m[k], 16)); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
+  const overlaps = (t: { x: number; y: number; width: number; height: number }, b: typeof t) =>
+    !(t.x > b.x + b.width || t.x + t.width < b.x || t.y > b.y + b.height || t.y + t.height < b.y);
+  for (const b of blocks) {
+    if (b.deleted) continue;
+    const inside = spans.filter((s) => s.x >= b.x - 2 && s.x <= b.x + b.width + 2 && s.y >= b.y - 2 && s.y <= b.y + b.height + 3);
+    if (!inside.length) continue;
+    // dominant colour among the runs in this block
+    const counts = new Map<string, number>();
+    for (const s of inside) counts.set(s.fill, (counts.get(s.fill) || 0) + 1);
+    let col = inside[0].fill, best = 0;
+    for (const [c, n] of counts) if (n > best) { best = n; col = c; }
+    if (lum(col) > 0.82 && !shapes.some((s) => overlaps(b, s)) && !imageOps.some((im) => overlaps(b, im.bbox))) continue;
+    b.color = col;
+    done.add(b.id);
+  }
+  return done;
 }
 
 /**

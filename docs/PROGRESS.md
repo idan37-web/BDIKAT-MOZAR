@@ -75,6 +75,23 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
 - ✅ **9 — persistence + PWA/offline** — IndexedDB library/projects (Milestone C) **+ this round's PWA layer**
   (see "Round 11"). `npm run verify:persistence` + `npm run verify:pwa`.
 
+## Round 12 — real text colours (op-list) + headless photo path (open follow-ups closed)
+Closed the two "open follow-ups" that were left as non-blockers:
+- **Real per-run text colour from the op-list** (`extractImages.walkPage`): tracks the text matrix
+  (BT/Tm/Td/T*/TL) + `setTextRenderingMode` and records the **exact fill colour** at each `showText`
+  baseline (`TextColorSpan[]`). `importPdf.assignOpListColors` matches spans to the clustered text
+  blocks by position and sets each block's colour — **PRIMARY** and **headless** (no raster). The
+  browser raster sampler (`sampleInkColor`) now only fills blocks the op-list didn't match
+  (Type3/path-drawn text). Invisible OCR text (render mode 3/7) is ignored; near-white kept only over
+  a captured dark backdrop. Measured on 3008: 668 text blocks → real colours (`#000000`, white-on-dark,
+  Peugeot red `#ba0500`, blue `#14a2dd`); ~88% non-placeholder.
+- **`tokens.accent`** (`templateLearning`): now a REAL value — the dominant SATURATED (non-gray)
+  text colour across the learned docs (was always undefined). `accentDynamic` still true per the brief.
+- **Headless photo path in the learn gate**: `verify:learn` now imports with a `@napi-rs/canvas`
+  factory (`renderPreviews:true, makeCanvas`), so the learned template carries **52 real image slots**
+  headlessly (was 0). New assertions: image slots ≥3, real-colour ratio >0.6, `tokens.accent` saturated.
+- No regression: `tsc` clean, both builds green, **all 11 `verify:*` gates pass**.
+
 ## Round 11 — Stage 9 PWA / offline app shell (uploaded Rebuild-Brief stage 9)
 The IndexedDB half of stage 9 was already done (Milestone C); the **offline PWA app-shell** half was missing.
 Added, dependency-free (no `vite-plugin-pwa`):
@@ -453,13 +470,12 @@ scale that won't text-extract — explicitly deferred). Grounded in the 8 real b
   clamped — never a big heading (which would inflate row height).
 
 ## Open follow-ups (not blockers; some folded into the phase)
-- Text colour refinement (op-list) → real `tokens.accent` per model (text colour still placeholder `#111418`;
-  shape/panel colours ARE now real).
-- **Interior generated pages still lack PHOTOS in a headless learn** (image extraction needs the browser canvas).
-  In the actual app (browser learn), interior image slots are learned and generated pages carry the source photos.
-  A headless image path (napi-canvas) would let the gates show photos too.
+- ✅ ~~Text colour refinement (op-list) → real `tokens.accent`~~ — **done in Round 12** (exact per-run colour
+  from the op-list, headless; `tokens.accent` is a real saturated colour).
+- ✅ ~~Interior generated pages lack PHOTOS in a headless learn~~ — **done in Round 12** (learn gate imports via
+  `@napi-rs/canvas`; learned template carries real image slots headlessly). The browser learn always had photos.
 - Spec tables are positioned cells (grid reproduced visually); a real `TableBlockIR` + gridlines could come from
-  source Excel (Milestone D).
+  source Excel (Milestone D) — largely addressed by Milestone D's `TableBlockIR`, kept here as the general note.
 
 ## Domain facts to reuse (measured; see brief for full table)
 - 6 brands: Peugeot · Citroën · Opel · DS · IM · MG. Multiple templates per brand (NOT one).

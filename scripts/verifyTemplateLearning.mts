@@ -2,13 +2,19 @@
 // PDFs (no browser needed: text-only IR import works under Node) and asserts the key
 // invariants. Run: `npm run verify:learn`.
 import { readFileSync } from 'node:fs';
+import { createCanvas, ImageData as NapiImageData } from '@napi-rs/canvas';
 import { importPdf } from '../src/pdf/importPdf';
 import { learnTemplate, summarizeTemplate } from '../src/templates/templateLearning';
 import type { DocumentIR } from '../src/types/catalog';
 
+// Headless image path: decode embedded photos via @napi-rs/canvas (no DOM) so the LEARN gate
+// exercises the same photo + real-colour pipeline the browser app uses.
+(globalThis as any).ImageData = NapiImageData;
+const makeCanvas = (w: number, h: number) => createCanvas(w, h) as unknown as HTMLCanvasElement;
+
 async function imp(file: string): Promise<DocumentIR> {
   const b = readFileSync(file);
-  return importPdf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), file.split('/').pop()!, { renderPreviews: false });
+  return importPdf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), file.split('/').pop()!, { renderPreviews: true, makeCanvas });
 }
 
 const checks: { name: string; pass: boolean }[] = [];
@@ -50,6 +56,20 @@ expect('early (cover/marketing) pages carry no table-only text kinds', firstData
 // single-doc fallback still yields a usable spec (everything dynamic, no evidence)
 const t1 = summarizeTemplate(learnTemplate([d3008]));
 expect('single-doc fallback works', t1.slots > 0 && t1.crossDoc === 0);
+
+// headless photo path: the learned template carries real image slots (hero/interior photos),
+// decoded via @napi-rs/canvas — not just text/shapes.
+const imageSlots = tpl.pages.flatMap((p) => p.slots).filter((s) => s.blockType === 'image');
+expect('headless learn carries image slots (photos via napi-canvas)', imageSlots.length >= 3);
+
+// real text colours from the op-list: the template's text token is a real colour and a saturated
+// brand accent is recovered (Peugeot red), not the #111418 placeholder.
+const textColors = d3008.pages.flatMap((p) => p.blocks).filter((b) => b.type === 'text' && !b.deleted).map((b) => (b as { color?: string }).color);
+const realColorRatio = textColors.filter((c) => c && c !== '#111418').length / Math.max(1, textColors.length);
+expect('text colours recovered from op-list (mostly non-placeholder)', realColorRatio > 0.6);
+const isSat = (hex?: string) => { const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || ''); if (!m) return false; const [r, g, b] = [1, 2, 3].map((k) => parseInt(m[k], 16)); return Math.max(r, g, b) - Math.min(r, g, b) > 40 && Math.max(r, g, b) > 60; };
+expect('learned tokens.accent is a real saturated colour', isSat(tpl.tokens.accent));
+console.log('colours:', JSON.stringify(tpl.tokens), '| image slots:', imageSlots.length, '| real-colour ratio:', realColorRatio.toFixed(2));
 
 let ok = true;
 for (const c of checks) { console.log(`${c.pass ? '✓' : '✗'} ${c.name}`); if (!c.pass) ok = false; }
