@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="AutoSpec Studio">
+  <rect width="512" height="512" rx="113" fill="#1a1d23"/>
+  <g>
+    <rect x="123" y="123" width="188" height="261" rx="12" fill="#f6f8fa"/>
+    <path d="M123 135a12 12 0 0 1 12-12h164a12 12 0 0 1 12 12v40H123z" fill="#1a767b"/>
+    <g fill="#c8d0d6">
+      <rect x="142" y="201" width="94" height="12"/>
+      <rect x="142" y="233" width="94" height="12"/>
+      <rect x="142" y="265" width="94" height="12"/>
+      <rect x="142" y="297" width="94" height="12"/>
+      <rect x="142" y="329" width="94" height="12"/>
+    </g>
+    <g fill="#2a9aa0">
+      <rect x="247" y="201" width="41" height="12"/>
+      <rect x="247" y="233" width="41" height="12"/>
+      <rect x="247" y="265" width="41" height="12"/>
+    </g>
+    <circle cx="311" cy="349" r="52" fill="#2a9aa0"/>
+    <path d="M290 349l16 17 27-33" fill="none" stroke="#fff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

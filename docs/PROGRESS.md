@@ -10,9 +10,13 @@ We executed the directive in order. **All stages 0–7 are done and verified.** 
 the IR editor → export a real vector Hebrew PDF**, alongside the original **import an external PDF → IR → edit →
 export** path. No simulated steps anywhere.
 
-**Now in: Phase "usable on a real catalog"** (`docs/PHASE-usable-on-real-catalog.md`) — hardening, not breadth.
-Milestone A ✅ (end-to-end on the real Peugeot family, image export, export wired into the editor). Next:
-B auto-fit, C IndexedDB persistence, D structured-data ingestion. See "Phase milestones" below.
+Against the uploaded **Rebuild-Brief (stages 0–9)**: stages 0–8 map onto the above and are done; **stage 9
+(persistence + PWA) is now also complete** — IndexedDB was done (Milestone C), and the offline **PWA app shell**
+was added this session (service worker + manifest + icons; gate `npm run verify:pwa`; see "Round 11").
+
+**"Usable on a real catalog" phase** (`docs/PHASE-usable-on-real-catalog.md`) — hardening, all milestones done:
+A ✅ (E2E on the real Peugeot family + image export), B ✅ (auto-fit), C ✅ (IndexedDB library/projects),
+D ✅ (Excel/CSV structured-data ingestion). See "Phase milestones" below. All 11 `verify:*` gates pass.
 
 The **new app** lives in `src/` (Vite + React + TS). The old design prototype is reference-only at
 `legacy.html` / `src/legacy/`. Do NOT build on the prototype (raster/overlay) — build on the IR.
@@ -66,6 +70,26 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
   emit learned content, dynamic slots take user text/images, unbound fall back to the learned sample). Opens in the
   SAME editor and exports via the SAME vector pipeline. UI: "יצירת קטלוג" screen. `npm run verify:gen` gates it
   (learn→generate→export round-trip; Hebrew order pixel-confirmed via PyMuPDF on the generated cover).
+- ✅ **8 — high-fidelity Hebrew export** — `exportPdf` (vector, `@pdf-lib/fontkit`, `bidi-js`, embedded images
+  + shapes + tables). Gated by every `verify:*` that ends in "export produced a real PDF".
+- ✅ **9 — persistence + PWA/offline** — IndexedDB library/projects (Milestone C) **+ this round's PWA layer**
+  (see "Round 11"). `npm run verify:persistence` + `npm run verify:pwa`.
+
+## Round 11 — Stage 9 PWA / offline app shell (uploaded Rebuild-Brief stage 9)
+The IndexedDB half of stage 9 was already done (Milestone C); the **offline PWA app-shell** half was missing.
+Added, dependency-free (no `vite-plugin-pwa`):
+- **`public/sw.js`** — service worker: install-time **precache of the whole built asset list**
+  (navigations network-first→cached shell; hashed assets stale-while-revalidate; cross-origin passthrough —
+  the app is 100% same-origin, no CDN). Old caches purged on activate; `skipWaiting`+`clients.claim`.
+- **`scripts/injectPrecache.mjs`** — post-build step (wired into `npm run build`): scans `dist/` and injects the
+  37 hashed URLs into `dist/sw.js`'s `PRECACHE` placeholder (Vite hashes names we can't know when authoring the SW).
+- **`public/manifest.webmanifest`** (RTL/he, `display:standalone`, theme `#1a1d23`) + **generated icons**
+  (`scripts/genIcons.mjs` → `icon-192/512/maskable-512.png`, `icon.svg`). `index.html` links them.
+- **`src/app/registerSw.ts`** — registers the SW, **guarded**: prod-only + http(s)-only, so `vite dev` (HMR) and
+  the `dist-single/index.html` file:// deliverable (already fully offline, everything inlined) are untouched.
+- **Gate `npm run verify:pwa`** (real Chromium, headless): loads the built app online → SW takes control →
+  goes **offline** → reload → **app still mounts from cache**; asserts manifest + icons. Verified against `dist/`.
+- Both builds still green: `npm run build` (multi-file + precache inject) and the single-file config.
 
 ## Round 10 — back-page class fixes (visual-order bidi, rotation, clip, occlusion) + soft scrim
 - **Mixed-line run order**: generators emit mixed HE/EN lines in LOGICAL or VISUAL stream order —

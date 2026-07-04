@@ -6,7 +6,7 @@
   "description": "AutoSpec Studio — catalog/PDF studio for automotive brochures (Hebrew, RTL). Rebuild per docs/AutoSpec-directive.md.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node scripts/injectPrecache.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "stage0": "tsx scripts/stage0.ts",
@@ -19,7 +19,8 @@
     "verify:persistence": "tsx scripts/verifyPersistence.mts",
     "verify:structured": "tsx scripts/verifyStructured.mts",
     "verify:graphics": "tsx scripts/verifyGraphics.mts",
-    "verify:ai": "tsx scripts/verifyAiAssist.mts"
+    "verify:ai": "tsx scripts/verifyAiAssist.mts",
+    "verify:pwa": "vite build && node scripts/injectPrecache.mjs && node scripts/verifyPwa.mjs"
   },
   "dependencies": {
     "@fontsource/heebo": "^5.2.8",
