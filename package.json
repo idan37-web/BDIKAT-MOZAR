@@ -20,6 +20,7 @@
     "verify:structured": "tsx scripts/verifyStructured.mts",
     "verify:graphics": "tsx scripts/verifyGraphics.mts",
     "verify:ai": "tsx scripts/verifyAiAssist.mts",
+    "verify:edit-tables": "tsx scripts/verifyEditTables.mts",
     "verify:pwa": "vite build && node scripts/injectPrecache.mjs && node scripts/verifyPwa.mjs"
   },
   "dependencies": {

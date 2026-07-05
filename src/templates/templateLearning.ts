@@ -5,7 +5,7 @@
 //
 // Built entirely on the IR (the source of truth) — never on the page raster.
 import type { BBox, DocumentIR, PageIR, TextBlockIR } from '../types/catalog';
-import { isTextBlock, isImageBlock, isShapeBlock } from '../types/catalog';
+import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock } from '../types/catalog';
 import {
   detectFormat,
   type PageRole,
@@ -129,10 +129,19 @@ export function groupRegions(page: PageIR, grouping: GroupMode = 'para'): Region
 
   const regions: Region[] = [];
   let clusterInput = texts;
-  if (grouping === 'row') {
-    // DENSE TABLE PAGE: reconstruct whole TABLES (rows × columns) — each becomes ONE table region
-    // (not a box per cell/row). Cells the detector didn't consume (headings, strays) fall through
-    // to paragraph clustering below.
+  // Reconstructed TABLE blocks (from import) become one table region each.
+  const tableBlocks = page.blocks.filter(isTableBlock);
+  for (const tb of tableBlocks) {
+    regions.push({
+      blockType: 'table', bbox: { x: tb.x, y: tb.y, width: tb.width, height: tb.height },
+      text: tb.rows.map((r) => r.cells.join(' ')).join('\n'),
+      count: tb.rows.length, maxFont: tb.fontSize, medFont: tb.fontSize, weight: 400,
+      color: tb.color, align: 'end', direction: 'rtl', fontFamily: tb.fontFamily,
+      table: { columns: tb.columns, colFractions: tb.colFractions, rows: tb.rows, rowHeight: tb.rowHeight, fontSize: tb.fontSize, color: tb.color, fontFamily: tb.fontFamily, sectionBg: tb.sectionBg },
+    });
+  }
+  if (grouping === 'row' && !tableBlocks.length) {
+    // FALLBACK (import ran with reconstructTables:false): detect tables from the raw cells here.
     const { tables, used } = detectTables(texts, page.width);
     for (const t of tables) {
       regions.push({

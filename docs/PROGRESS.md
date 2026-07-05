@@ -75,6 +75,24 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
 - ✅ **9 — persistence + PWA/offline** — IndexedDB library/projects (Milestone C) **+ this round's PWA layer**
   (see "Round 11"). `npm run verify:persistence` + `npm run verify:pwa`.
 
+## Round 15 — tables in the EDIT path + general spec/equipment + yellow-bleed
+Frontera feedback: the table fixes weren't visible when you IMPORT→edit (Round 14 only touched
+learn→generate), the yellow section band still bled over the table, and equipment↔spec still confused.
+- **Edit-path reconstruction** (`tableDetect.reconstructTables`, wired into `ImportScreen` via
+  `importPdf({reconstructTables:true})`): importing for EDITING now rebuilds each dense spec/equipment
+  table into ONE clean editable `TableBlockIR` (white `cellBg`, RTL), replacing the raw cells. Learning
+  and all gates still run on the raw cells (reconstruction is OFF by default — it broke role
+  classification, which counts text blocks, when applied globally), so nothing downstream regressed.
+- **Yellow bleed fixed at the source**: a coloured, non-thin band that sits ≥60% inside a table is a
+  SECTION highlight — it is removed from the page (so it can't bleed over the whole column in the
+  editor) and its colour is captured as the table's new `sectionBg`, rendered behind section rows in
+  both the editor (`PageView`) and export (`exportPdf`). Verified with a synthetic yellow-band page.
+- **Spec vs equipment — one general rule** (`tableKind` + `isSpecValue`): a table is `spec-table`
+  only if some non-label column is ≥40% STANDALONE numbers across its data rows. A feature list
+  ("4 שקעי USB", per-trim checkmarks) has no such column → `equipment`. Zero brand/file logic;
+  verified across 6 catalogs (single-col feature lists → equipment, numeric grids → spec-table).
+- New gate `npm run verify:edit-tables`; all 12 `verify:*` gates pass; `tsc` clean; builds green.
+
 ## Round 14 — ROOT table fix: reconstruct whole tables (not row-by-row) + heritage/yellow
 User feedback on the real Opel Frontera catalog: (a) equipment table read as spec-table, (b) the
 spec table still detected row-by-row (Round 13's rows weren't enough — wanted ONE table), (c) yellow

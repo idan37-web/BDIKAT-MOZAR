@@ -35,7 +35,9 @@ export function ImportScreen({ onImported, onLearnTemplate, onGenerate, onOpenPr
     setErr(null); setBusy(true);
     try {
       const buf = await file.arrayBuffer();
-      const doc = await importPdf(buf, file.name, { renderPreviews: true, previewScale: 2 });
+      // reconstruct dense tables into clean editable table objects for the editor (white cells, no
+      // coloured-band bleed) — the edit path, unlike learning, wants ready-to-edit tables.
+      const doc = await importPdf(buf, file.name, { renderPreviews: true, previewScale: 2, reconstructTables: true });
       onImported(doc);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

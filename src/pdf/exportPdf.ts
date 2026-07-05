@@ -235,6 +235,7 @@ function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: Em
     const rowTop = tb.y + r * tb.rowHeight;
     const size = tb.fontSize;
     if (row.kind === 'section') {
+      if (tb.sectionBg) page.drawRectangle({ x: tb.x, y: pageH - rowTop - tb.rowHeight, width: tb.width, height: tb.rowHeight, color: hexToRgb(tb.sectionBg) });
       cellText(row.cells[0] || '', tb.x, tb.width, rowTop, 'end', size, heading, true);
     } else {
       for (let i = 0; i < tb.columns; i++) {

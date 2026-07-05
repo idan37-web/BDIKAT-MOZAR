@@ -3,7 +3,7 @@
 // box per cell/row. Built on the same RTL insight used for rows: a Hebrew LABEL column anchors a
 // table and owns the VALUE columns to its reading-left, up to the next label column — which keeps
 // two side-by-side tables separate even though their columns interleave in x.
-import type { TextBlockIR, TableRowIR } from '../types/catalog';
+import type { TextBlockIR, TableRowIR, TableBlockIR, PageIR, ShapeBlockIR } from '../types/catalog';
 
 export interface DetectedTable {
   bbox: { x: number; y: number; width: number; height: number };
@@ -160,4 +160,60 @@ export function detectTables(cells: TextBlockIR[], pageWidth: number): { tables:
     }
   }
   return { tables, used };
+}
+
+const lum = (hex?: string) => { const m = /^#(..)(..)(..)$/.exec(hex || ''); if (!m) return 1; const [r, g, b] = [1, 2, 3].map((k) => parseInt(m[k], 16)); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
+const bboxOverlapFrac = (a: { x: number; y: number; width: number; height: number }, b: typeof a) => {
+  const ix = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  const inter = ix * iy, area = a.width * a.height;
+  return area > 0 ? inter / area : 0;
+};
+
+/** Build a TableBlockIR from a detected table (shared by import reconstruction + generation). */
+export function detectedToTableBlock(t: DetectedTable, id: string, sectionBg?: string): TableBlockIR {
+  return {
+    id, type: 'table',
+    x: t.bbox.x, y: t.bbox.y, width: t.bbox.width, height: t.bbox.height,
+    rotation: 0, zIndex: 500_000, source: 'original',
+    originalBBox: { ...t.bbox },
+    columns: t.columns, colFractions: t.colFractions, rows: t.rows,
+    rowHeight: t.rowHeight, fontFamily: t.fontFamily || 'sans-serif', fontSize: t.fontSize,
+    color: t.color || '#111418', gridColor: '#d7dade', cellBg: '#ffffff', sectionBg,
+    direction: 'rtl',
+  };
+}
+
+/**
+ * IMPORT-TIME reconstruction: replace a dense page's raw table cells with clean editable
+ * TableBlockIR objects, and drop the coloured SECTION-BAND shapes that fall inside a table (the
+ * table now paints its own white cells + a captured section-header colour) — this is what removes
+ * the "yellow band bleeds over the whole table" artefact in the editor. Non-table content is kept.
+ */
+export function reconstructTables(page: PageIR): void {
+  const texts = page.blocks.filter((b): b is TextBlockIR => b.type === 'text');
+  if (texts.length < 20) return; // only dense pages
+  const { tables, used } = detectTables(texts, page.width);
+  if (!tables.length) return;
+
+  const shapes = page.blocks.filter((b): b is ShapeBlockIR => b.type === 'shape' || b.type === 'background');
+  const keep: typeof page.blocks = [];
+  const removedBandColors: string[] = [];
+  for (const b of page.blocks) {
+    if (b.type === 'text' && used.has(b.id)) continue; // consumed into a table
+    if ((b.type === 'shape' || b.type === 'background') && (b as ShapeBlockIR).fill) {
+      const s = b as ShapeBlockIR;
+      const thinLine = Math.min(s.width, s.height) <= 3; // a gridline/rule, not a fill band
+      const insideTable = tables.some((t) => bboxOverlapFrac({ x: s.x, y: s.y, width: s.width, height: s.height }, t.bbox) > 0.6);
+      // a coloured (non-white) band inside a table is a section highlight → drop it (the table
+      // renders it), and remember its colour so the table can reproduce the section background.
+      if (insideTable && !thinLine && lum(s.fill) < 0.95) { removedBandColors.push(s.fill!); continue; }
+      if (insideTable && !thinLine && lum(s.fill) >= 0.95) continue; // white cell fills → table paints its own
+    }
+    keep.push(b);
+  }
+  const sectionBg = removedBandColors.length ? mode(removedBandColors) : undefined;
+  tables.forEach((t, i) => keep.push(detectedToTableBlock(t, `${page.id}_tbl${i}`, sectionBg)));
+  page.blocks = keep;
+  void shapes;
 }

@@ -132,6 +132,8 @@ export interface TableBlockIR extends BlockIR {
   gridColor?: string;
   /** optional fill behind ALL data cells (e.g. "#ffffff" to force a clean background). */
   cellBg?: string;
+  /** optional fill behind SECTION-header rows (a captured highlight band, e.g. "#fff200"). */
+  sectionBg?: string;
   direction: TextDirection;
   embeddedFontRef?: EmbeddedFontRef;
 }

@@ -4,6 +4,7 @@ import type { BBox, DocumentIR, PageIR, ImageBlockIR, ShapeBlockIR } from '../ty
 import { extractTextBlocks, clusterTextBlocks } from './extractLayout';
 import { renderPageCanvas, cropCanvasErasingText, cropGraphic, sampleInkColor } from './renderPage';
 import { walkPage, resolveImage, type ShapeOp, type MakeCanvas } from './extractImages';
+import { reconstructTables } from '../templates/tableDetect';
 
 let workerConfigured = false;
 
@@ -26,6 +27,9 @@ export interface ImportOptions {
   /** Canvas factory for Node/headless image extraction (e.g. @napi-rs/canvas). When set,
    *  image objects are decoded without a DOM; the raster preview stays browser-only. */
   makeCanvas?: MakeCanvas;
+  /** Reconstruct dense tables into editable TableBlockIR objects (default true). Set false to keep
+   *  raw positioned cells (e.g. cell-level verification, or the legacy per-cell learn path). */
+  reconstructTables?: boolean;
 }
 
 export async function importPdf(
@@ -263,6 +267,12 @@ export async function importPdf(
     : /citroen|citro|c3|c4|c5|berlingo|jumpy/.test(n) ? 'citroen'
     : /opel|corsa|astra|mokka|grandland|crossland|combo|zafira|insignia|vivaro|frontera/.test(n) ? 'opel'
     : (/\bmg(s\d|[_\s-](hs|zs|ehs|phev)|\d)/i.test(n) || /\bmg\b/i.test(n)) ? 'mg' : 'unknown';
+
+  // Reconstruct dense tables into clean editable TableBlockIR objects — so the EDITOR and export
+  // show a real table (white cells, captured section band) instead of raw cells + coloured shapes
+  // that bleed. OFF by default (role classification / learning run on the raw cells); the edit
+  // entry point (ImportScreen) opts IN so the user edits clean tables.
+  if (opts.reconstructTables === true) for (const p of pages) reconstructTables(p);
 
   return {
     id: `doc_${Date.now()}`,

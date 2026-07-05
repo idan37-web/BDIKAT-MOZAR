@@ -16,6 +16,8 @@ export interface SlotTable {
   fontSize: number;
   color: string;
   fontFamily: string;
+  /** captured section-header band colour (e.g. a yellow highlight). */
+  sectionBg?: string;
 }
 
 /** Repeated page roles across a same-family catalog. */

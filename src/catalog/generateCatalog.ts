@@ -129,7 +129,7 @@ function makeTableBlock(slot: SlotSpec, z: number, fallbackColor: string): Table
     originalBBox: { ...slot.bbox },
     columns: t.columns, colFractions: t.colFractions, rows: t.rows,
     rowHeight: t.rowHeight, fontFamily: t.fontFamily || 'sans-serif', fontSize: t.fontSize,
-    color: t.color || fallbackColor, gridColor: '#d7dade', cellBg: '#ffffff', direction: 'rtl',
+    color: t.color || fallbackColor, gridColor: '#d7dade', cellBg: '#ffffff', sectionBg: t.sectionBg, direction: 'rtl',
   };
 }
 

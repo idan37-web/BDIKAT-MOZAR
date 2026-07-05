@@ -225,6 +225,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
                     style={{ position: 'absolute', left: 0, top, width: b.width * scale, height: rh * scale,
                       display: 'flex', alignItems: 'center', justifyContent: 'flex-start', padding: `0 ${3 * scale}px`,
                       fontFamily: fontFamily || b.fontFamily, fontSize: b.fontSize * scale, fontWeight: 700,
+                      background: b.sectionBg || 'transparent',
                       color: compare ? 'rgba(20,40,120,.55)' : (b.headingColor || b.color), borderBottom: `${Math.max(0.5, 0.6 * scale)}px solid ${b.gridColor || '#d7dade'}`, overflow: 'hidden' }}>
                     {editingCell && editingCell.tableId === b.id && editingCell.r === r ? (
                       <input autoFocus dir="rtl" defaultValue={row.cells[0] || ''}
