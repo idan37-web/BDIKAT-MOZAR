@@ -23,7 +23,7 @@ const tableBlocks = doc.pages.flatMap((p) => p.blocks).filter((bl): bl is TableB
 expect('import reconstructs spec tables (TableBlockIR)', tableBlocks.length >= 2);
 expect('reconstructed tables have real rows × columns', tableBlocks.some((t) => t.rows.length >= 6 && t.columns >= 2));
 expect('reconstructed tables paint white cells', tableBlocks.every((t) => t.cellBg === '#ffffff'));
-const lum = (hex: string) => { const m = /^#(..)(..)(..)$/.exec(hex); if (!m) return 1; const [r, g, bl] = [1, 2, 3].map((k) => parseInt(m[k], 16)); return (0.299 * r + 0.587 * bl + 0.114 * bl) / 255; };
+const lum = (hex: string) => { const m = /^#(..)(..)(..)$/.exec(hex); if (!m) return 1; const [r, g, bl] = [1, 2, 3].map((k) => parseInt(m[k], 16)); return (0.299 * r + 0.587 * g + 0.114 * bl) / 255; };
 const ovFrac = (a: { x: number; y: number; width: number; height: number }, c: typeof a) => {
   const ix = Math.max(0, Math.min(a.x + a.width, c.x + c.width) - Math.max(a.x, c.x));
   const iy = Math.max(0, Math.min(a.y + a.height, c.y + c.height) - Math.max(a.y, c.y));
