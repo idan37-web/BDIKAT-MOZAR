@@ -16,7 +16,7 @@ import {
   type TemplatePageSpec,
   type TemplateSpec,
 } from './templateSpec';
-import { detectTables } from './tableDetect';
+import { detectTables, isTablePage } from './tableDetect';
 
 // ---------------------------------------------------------------------------
 // Geometry helpers
@@ -358,7 +358,9 @@ function slotKind(role: PageRole, r: Region, isLargestText: boolean, early = fal
     // a small image high on the page is almost always a brand logo, not a hero photo
     const small = r.bbox.width <= 200 && r.bbox.height <= 120;
     if (small && r.bbox.y <= 120) return 'logo';
-    return role === 'cover' || role === 'feature' ? 'hero-image' : 'image';
+    // SIMPLE (user rule): only the COVER image is special ('hero-image'); every other photo in the
+    // catalog is just an image — no per-page image taxonomy.
+    return role === 'cover' ? 'hero-image' : 'image';
   }
   const t = r.text || '';
   // MARKETING pages (cover / feature / content / interior) and EARLY pages (before the first data
@@ -561,43 +563,9 @@ function buildSlot(
 // ---------------------------------------------------------------------------
 // Main entry
 // ---------------------------------------------------------------------------
-/** Dense table page = many small-font runs → keep cells unclustered (preserve the grid). */
-function isDensePage(page: PageIR): boolean {
-  const texts = page.blocks.filter(isTextBlock);
-  if (texts.length < 26) return false;
-  // timeline/heritage narrative (years, no measurement units) is prose, not a grid — cluster it
-  const allText = texts.map((t) => t.text).join(' ');
-  const years = (allText.match(/\b(19|20)\d{2}\b/g) || []).length;
-  const units = (allText.match(KW.units) || []).length;
-  if (years >= 4 && units <= 1) return false;
-  // PRIMARY table signal, checked FIRST: a GRID OF SHORT CELLS. A real spec/equipment table is
-  // mostly short runs (labels + values), so this wins even when the page carries a big DIMENSION
-  // DIAGRAM (30-40% image area) or has NO big heading at all (a headingless spec page makes the
-  // relative-font test below meaningless — that missed C5's matrix spec page entirely).
-  // Marketing prose fails this (its runs are multi-word sentences).
-  const shortCells = texts.filter((t) => t.text.trim().split(/\s+/).length <= 4).length;
-  if (shortCells >= texts.length * 0.6) return true;
-  // "small" is RELATIVE to the page's own heading size, not an absolute point size — a 1920×1080
-  // deck's table body is ~15pt while a print-spread's is ~8pt, but both sit well under the page's
-  // big heading. (An absolute `<10` missed the deck's spec tables entirely → columns blobbed.)
-  const maxFont = Math.max(0, ...texts.map((t) => t.fontSize));
-  const smallThresh = Math.max(11, maxFont * 0.45);
-  const small = texts.filter((t) => t.fontSize < smallThresh).length;
-  if (small / texts.length < 0.55) return false;
-  // Otherwise a hero spread — ONE big image, OR SEVERAL medium images covering a quarter+ of the
-  // page — plus a heading is a MARKETING page, not a data table (even when the copy mentions
-  // systems/units). (The single-image test alone missed 4-up feature spreads → "safety" data pages.)
-  const pageArea = page.width * page.height;
-  const imgs = page.blocks.filter(isImageBlock);
-  const bigImage = imgs.some((im) => im.width * im.height >= pageArea * 0.22);
-  const totalImg = imgs.reduce((s, im) => s + im.width * im.height, 0);
-  const bigHeading = texts.some((t) => t.fontSize >= 18);
-  if ((bigImage || totalImg >= pageArea * 0.25) && bigHeading) return false;
-  // Narrative/marketing prose: many long sentences (≥8 words) rather than short table cells.
-  const prose = texts.filter((t) => t.text.trim().split(/\s+/).length >= 8).length;
-  if (prose >= 4 && prose >= texts.length * 0.22) return false;
-  return true;
-}
+/** Dense table page — shared with the edit-path reconstruction so both paths agree on what a
+ * "table page" is (structural signals only; see tableDetect.isTablePage). */
+const isDensePage = isTablePage;
 
 export interface LearnOptions {
   family?: string;

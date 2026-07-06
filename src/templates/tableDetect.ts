@@ -141,9 +141,12 @@ export function detectTables(cells: TextBlockIR[], pageWidth: number): { tables:
   const raw = cells.filter((c) => c.rotation === 0 && !c.deleted && c.text.trim());
   // exclude page TITLES/headings — a table cell is body-sized; a big title (e.g. "מפרט טכני") sits
   // above the grid and must stay a separate heading slot, not be swallowed as a table section row.
+  // Also exclude PARAGRAPH blocks (multi-line / tall): a paragraph is ONE unit and must never be
+  // chopped into table rows — the root of the "marketing copy became a bordered table" regression.
   const fs = raw.map((c) => c.fontSize).sort((a, b) => a - b);
   const medFont = fs[Math.floor(fs.length / 2)] || 10;
-  const flat = raw.filter((c) => c.fontSize <= medFont * 1.8);
+  const flat = raw.filter((c) =>
+    c.fontSize <= medFont * 1.8 && !c.text.includes('\n') && c.height <= (c.fontSize || 10) * 2.6);
   let cols = toColumns(flat, pageWidth);
   // drop sparse OUTLIER columns (a real grid column has many stacked cells; scattered numbers like a
   // car's dimension callouts form 1-2-cell "columns" that would bloat a table's bbox over the image).
@@ -153,13 +156,54 @@ export function detectTables(cells: TextBlockIR[], pageWidth: number): { tables:
   const used = new Set<string>();
   for (const g of groups) {
     const t = buildTable(g);
-    // a real table has multiple rows AND (multiple columns OR a long single-column list)
-    if (t && t.rows.length >= 3 && (t.columns >= 2 || t.rows.length >= 6)) {
+    if (!t) continue;
+    // a real table has multiple rows AND (multiple columns OR a long single-column list).
+    // A single-column group must also be vertically DENSE (rows stacked like a list) — a sparse
+    // column of rowspan CATEGORY labels ("מנוע בנזין" beside a spec grid) is not its own table;
+    // its cells stay free text at their original positions.
+    const denseRows = t.rowHeight <= Math.max(10, t.fontSize * 3);
+    if (t.rows.length >= 3 && (t.columns >= 2 || (t.rows.length >= 6 && denseRows))) {
       tables.push(t);
       for (const col of g) for (const c of col.cells) used.add(c.id);
     }
   }
   return { tables, used };
+}
+
+const UNITS = /כ["׳]?ס|סמ["׳]?ק|ק["׳]?ג|ק["׳]?מ|קמ["׳]?ש|מ["׳]?מ|קוט["׳]?ש|נ["׳]?מ|\bhp\b|\bkW\b|\bNm\b/i;
+
+/** Is this page a genuine DATA-TABLE page (spec/equipment grid)? Structural signals only —
+ * shared by learning (row grouping) and edit-path reconstruction, so a marketing/prose page can
+ * never be "tabled". */
+export function isTablePage(page: PageIR): boolean {
+  const texts = page.blocks.filter((b): b is TextBlockIR => b.type === 'text');
+  if (texts.length < 26) return false;
+  // timeline/heritage narrative (years, no measurement units) is prose, not a grid
+  const allText = texts.map((t) => t.text).join(' ');
+  const years = (allText.match(/\b(19|20)\d{2}\b/g) || []).length;
+  const units = (allText.match(UNITS) || []).length;
+  if (years >= 4 && units <= 1) return false;
+  // PRIMARY table signal, checked FIRST: a GRID OF SHORT CELLS — wins even with a big dimension
+  // diagram or no big heading (a headingless spec page breaks the relative-font test below).
+  const shortCells = texts.filter((t) => t.text.trim().split(/\s+/).length <= 4).length;
+  if (shortCells >= texts.length * 0.6) return true;
+  // "small" is RELATIVE to the page's own heading size, not an absolute point size.
+  const maxFont = Math.max(0, ...texts.map((t) => t.fontSize));
+  const smallThresh = Math.max(11, maxFont * 0.45);
+  const small = texts.filter((t) => t.fontSize < smallThresh).length;
+  if (small / texts.length < 0.55) return false;
+  // A hero spread — ONE big image, OR SEVERAL medium images covering a quarter+ of the page — plus
+  // a heading is a MARKETING page, not a data table (even when the copy mentions systems/units).
+  const pageArea = page.width * page.height;
+  const imgs = page.blocks.filter((b) => b.type === 'image');
+  const bigImage = imgs.some((im) => im.width * im.height >= pageArea * 0.22);
+  const totalImg = imgs.reduce((s, im) => s + im.width * im.height, 0);
+  const bigHeading = texts.some((t) => t.fontSize >= 18);
+  if ((bigImage || totalImg >= pageArea * 0.25) && bigHeading) return false;
+  // Narrative/marketing prose: many long sentences (≥8 words) rather than short table cells.
+  const prose = texts.filter((t) => t.text.trim().split(/\s+/).length >= 8).length;
+  if (prose >= 4 && prose >= texts.length * 0.22) return false;
+  return true;
 }
 
 const lum = (hex?: string) => { const m = /^#(..)(..)(..)$/.exec(hex || ''); if (!m) return 1; const [r, g, b] = [1, 2, 3].map((k) => parseInt(m[k], 16)); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
@@ -191,8 +235,8 @@ export function detectedToTableBlock(t: DetectedTable, id: string, sectionBg?: s
  * the "yellow band bleeds over the whole table" artefact in the editor. Non-table content is kept.
  */
 export function reconstructTables(page: PageIR): void {
+  if (!isTablePage(page)) return; // NEVER "table" a marketing/prose page (paragraphs are units)
   const texts = page.blocks.filter((b): b is TextBlockIR => b.type === 'text');
-  if (texts.length < 20) return; // only dense pages
   const { tables, used } = detectTables(texts, page.width);
   if (!tables.length) return;
 

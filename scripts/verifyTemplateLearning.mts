@@ -40,8 +40,9 @@ expect('spec page → whole spec-table slot(s)', specTables.length > 0);
 expect('spec table has real rows × columns', specTables.some((s) => (s.table?.rows.length || 0) >= 6 && (s.table?.columns || 0) >= 2));
 expect('spec table has label + value cells (a real grid)', specTables.some((s) =>
   s.table!.rows.some((r) => r.kind === 'data' && r.cells.length >= 2 && r.cells[0] && r.cells[1])));
-// consolidation: a spec page is now a handful of table/heading slots, not dozens of cell boxes
-expect('spec page consolidated (few slots, not per-cell)', specPages.every((p) => p.slots.filter((s) => s.blockType === 'text' || s.blockType === 'table').length < 12));
+// consolidation: a spec page is a few table/heading slots plus the free rowspan CATEGORY labels
+// (rejected from tables by design — a sparse category sidebar is not a table), not 60+ cell boxes
+expect('spec page consolidated (tables + category labels, not per-cell)', specPages.every((p) => p.slots.filter((s) => s.blockType === 'text' || s.blockType === 'table').length < 24));
 
 const back = tpl.pages.find((p) => p.role === 'back');
 expect('found back/legal page', !!back);

@@ -75,6 +75,25 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
 - ✅ **9 — persistence + PWA/offline** — IndexedDB library/projects (Milestone C) **+ this round's PWA layer**
   (see "Round 11"). `npm run verify:persistence` + `npm run verify:pwa`.
 
+## Round 16 — REGRESSION FIX: paragraphs must never become tables + simplification
+Round 15's edit-path reconstruction ran on ANY page with ≥20 text blocks — so marketing/prose pages
+(5008 battery, i-Cockpit, LKA spreads) had their paragraph lines converted into bordered "tables".
+User also set a simplicity rule: a TABLE is one unit, a PARAGRAPH is one unit, and images are not
+taxonomised (only the cover photo is special). Fixes:
+- **One shared page gate** (`tableDetect.isTablePage`, structural signals only): edit-path
+  `reconstructTables` and learning's row-grouping now use the SAME "is this a data-table page"
+  decision (they had diverged — the regression's root). Marketing/prose pages are never tabled.
+- **A paragraph can never be a table cell**: multi-line / tall blocks are excluded from
+  `detectTables` input, so wrapped copy can't be chopped into rows.
+- **A sparse rowspan CATEGORY sidebar is not a table**: 1-column groups must be vertically dense
+  (rowHeight ≤ ~3×font) — the category labels beside a Peugeot spec grid stay free text at their
+  original spots instead of becoming a broken bordered strip. 5008/3008 edit-mode spec pages now
+  render close to the original (verified by pixels); the battery page renders as clean paragraphs.
+- **Image simplification (user rule)**: `hero-image` only on the COVER; photos on any other page
+  are plain `image` (logo detection unchanged).
+- verify:learn consolidation threshold updated (tables + free category labels, not per-cell).
+  All 12 gates pass; `tsc` clean; builds green.
+
 ## Round 15 — tables in the EDIT path + general spec/equipment + yellow-bleed
 Frontera feedback: the table fixes weren't visible when you IMPORT→edit (Round 14 only touched
 learn→generate), the yellow section band still bled over the table, and equipment↔spec still confused.
