@@ -65,6 +65,28 @@ const expect = (name: string, pass: boolean) => checks.push({ name, pass });
   expect('T3 PageView: only the page CONTAINER scales (blocks are %)', scaleUses <= 2 && src.includes("'--scale-factor'"));
 }
 
+// ---------------------------------------------------------------------------
+// T4 — Hebrew bidi pipeline (UAX #9 via bidi-js; per-line reorder, never hand-reverse)
+// ---------------------------------------------------------------------------
+{
+  const { toVisualLine } = await import('../src/engine/bidi');
+  // playbook fixture 1: price line — digits must ascend left-to-right inside the RTL flow
+  const v1 = toVisualLine('מחיר: 149,900 ₪');
+  expect('T4 digits not reversed in price line', v1.includes('149,900'));
+  // playbook fixture 2: mixed Hebrew + Latin + digits — the Latin run stays intact
+  const v2 = toVisualLine('מנוע 1.2 PureTech טורבו');
+  expect('T4 Latin run intact', v2.includes('PureTech') && v2.includes('1.2'));
+  // playbook fixture 3: brackets face correctly (LTR-content parens stay upright)
+  const v3 = toVisualLine('(אוטומטי) 8 הילוכים');
+  expect('T4 bracket pair faces correctly', (v3.match(/\(/g) || []).length === 1 && (v3.match(/\)/g) || []).length === 1 && v3.includes('8'));
+  const v4 = toVisualLine('צריכת דלק (WLTP) משולבת');
+  expect('T4 LTR-content parens not mirrored', v4.includes('(WLTP)'));
+  // RTL visual order: for a PURE-RTL string, visual == full char reversal (drawing those glyphs
+  // left→right yields right-to-left reading — the property the pixel-verified exports rely on)
+  const v5 = toVisualLine('שלום עולם');
+  expect('T4 pure-RTL visual = char reversal (L2)', v5 === [...'שלום עולם'].reverse().join(''));
+}
+
 let ok = true;
 for (const c of checks) { console.log(`${c.pass ? '✓' : '✗'} ${c.name}`); if (!c.pass) ok = false; }
 if (!ok) { console.error('ENGINE VERIFY FAILED'); process.exit(1); }
