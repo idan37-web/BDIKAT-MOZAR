@@ -6,7 +6,7 @@
   "description": "AutoSpec Studio — catalog/PDF studio for automotive brochures (Hebrew, RTL). Rebuild per docs/AutoSpec-directive.md.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node scripts/injectPrecache.mjs",
+    "build": "vitest run && tsc && vite build && node scripts/injectPrecache.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "stage0": "tsx scripts/stage0.ts",
@@ -22,7 +22,9 @@
     "verify:ai": "tsx scripts/verifyAiAssist.mts",
     "verify:edit-tables": "tsx scripts/verifyEditTables.mts",
     "verify:pwa": "vite build && node scripts/injectPrecache.mjs && node scripts/verifyPwa.mjs",
-    "verify:engine": "tsx scripts/verifyEngine.mts"
+    "verify:engine": "tsx scripts/verifyEngine.mts",
+    "test": "vitest run",
+    "build:single": "vitest run && tsc --noEmit && vite build --config vite.singlefile.config.ts"
   },
   "dependencies": {
     "@fontsource/heebo": "^5.2.8",
@@ -44,6 +46,7 @@
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
-    "vite-plugin-singlefile": "^2.3.3"
+    "vite-plugin-singlefile": "^2.3.3",
+    "vitest": "^4.1.10"
   }
 }

@@ -610,3 +610,22 @@ Stage 7 catalog generation → Stage 6 template learning (IR-based) → image/te
 fix → Stage 5 images → editor move+tools → brand font/no-mask/resize → single-file build → RTL export
 glyph-positioning → Stage 4 export → Stage 3 editor → Stage 2 import → Stage 1 Vite migration → Stage 0 gate.
 (See `git log`.)
+
+## Round 18 — delivery-chain verifiability: build stamp + vitest enforcement layer
+User audit request: the delivered single-file looked near-identical to the previous build
+(true cause: T1–T6 add ~10KB of engine code to a 5.4MB asset-dominated bundle and zero UI
+strings; and identical filenames + no visible build id made builds indistinguishable).
+Audit result: no merge gap (all work on the single build branch claude/clever-noether-qvqfgd),
+every playbook module wired into the runtime path, signatures present in the bundle.
+Hardening added:
+- **Build stamp**: vite `define` injects `__BUILD_ID__` (git short hash · UTC time) in BOTH
+  configs; always-visible footer chip in the app. Every delivered build is identifiable.
+- **tests/fixtures/**: 3 real brand PDFs (citroen-c3, peugeot-3008, peugeot-5008).
+- **vitest enforcement** (`npm test`, and `npm run build` / `build:single` RUN IT FIRST —
+  red tests fail the build): tests/playbook.test.ts automates the T1–T6 acceptance criteria
+  against the fixtures; tests/guards.test.ts adds structural guards that fail the build if
+  (A) an editor/app component consumes pdf.js text items directly instead of Block objects,
+  (B) `.drawText(` is called in a file that does not import the bidi seam,
+  (C) image extraction stops being XObject-first (canvas crop allowed only as the logged
+  last-resort fallback in importPdf/renderPage).
+- Definition of done from now on: all tests green + bundle rebuilt + build stamp updated.
