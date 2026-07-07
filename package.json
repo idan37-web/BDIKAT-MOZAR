@@ -21,7 +21,8 @@
     "verify:graphics": "tsx scripts/verifyGraphics.mts",
     "verify:ai": "tsx scripts/verifyAiAssist.mts",
     "verify:edit-tables": "tsx scripts/verifyEditTables.mts",
-    "verify:pwa": "vite build && node scripts/injectPrecache.mjs && node scripts/verifyPwa.mjs"
+    "verify:pwa": "vite build && node scripts/injectPrecache.mjs && node scripts/verifyPwa.mjs",
+    "verify:engine": "tsx scripts/verifyEngine.mts"
   },
   "dependencies": {
     "@fontsource/heebo": "^5.2.8",

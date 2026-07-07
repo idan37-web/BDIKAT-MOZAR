@@ -3,6 +3,7 @@
 // flag and a transform matrix in bottom-left PDF user space — we convert to our
 // top-left point coordinates. No bidi reordering here: the IR stores logical text.
 import type { TextBlockIR } from '../types/catalog';
+import { reconstruct, type ReconUnit } from '../engine/textRecon';
 
 interface PdfTextItem {
   str: string;
@@ -92,105 +93,57 @@ export function extractTextBlocks(
 // by x — so bidi is untouched (reordering happens only at render/export).
 // ---------------------------------------------------------------------------
 
-const HEB = /[֐-׿]/;
-function isRtlText(s: string): boolean {
-  let he = 0, lat = 0;
-  for (const ch of s) { if (HEB.test(ch)) he++; else if (/[A-Za-z]/.test(ch)) lat++; }
-  return he >= lat && he > 0;
-}
 
-/** Merge same-baseline adjacent runs into LINES, then stacked prose lines into PARAGRAPHS.
- * Table safety: a line that shares its y-band with another line (a table ROW with several
- * cells) is never paragraph-merged, and big horizontal gaps (column gutters) never line-merge —
- * so spec/equipment grids keep one block per cell. */
+/** ReconUnit adapter carrying its source TextBlockIR. */
+interface UnitIR extends ReconUnit { block: TextBlockIR; }
+
+/** Runs → LINES → PARAGRAPHS via the T1 text-reconstruction engine (src/engine/textRecon.ts —
+ * a pdfplumber WordExtractor port). Table safety is preserved: a line sharing its y-band with
+ * another x-disjoint line is a table ROW and never paragraph-merges, and column gutters split
+ * a physical line into separate fragments — so spec/equipment grids keep one block per cell.
+ * Rotated runs (vertical sidebars) keep their own boxes. */
 export function clusterTextBlocks(allBlocks: TextBlockIR[]): TextBlockIR[] {
-  // rotated runs (vertical sidebars) keep their own boxes — never merged with horizontal text
   const rotated = allBlocks.filter((b) => b.rotation !== 0);
   const blocks = allBlocks.filter((b) => b.rotation === 0);
   if (blocks.length < 2) return allBlocks;
 
-  // ---- phase 1: lines (union-find over same-baseline neighbours) ----
-  const par = blocks.map((_, i) => i);
-  const find = (i: number): number => (par[i] === i ? i : (par[i] = find(par[i])));
-  for (let i = 0; i < blocks.length; i++) {
-    for (let j = i + 1; j < blocks.length; j++) {
-      const a = blocks[i], b = blocks[j];
-      const fa = a.fontSize || 10, fb = b.fontSize || 10;
-      if (Math.max(fa, fb) / Math.min(fa, fb) > 1.3) continue;
-      if (Math.abs(a.y - b.y) > Math.min(fa, fb) * 0.4) continue;
-      const gap = Math.max(a.x, b.x) - Math.min(a.x + a.width, b.x + b.width);
-      if (gap > Math.max(fa, fb) * 0.9 || gap < -Math.max(fa, fb)) continue; // gutters & deep overlaps stay apart
-      par[find(i)] = find(j);
+  const units: UnitIR[] = blocks.map((b) => ({
+    text: b.text, x0: b.x, x1: b.x + b.width, top: b.y, bottom: b.y + b.height,
+    size: b.fontSize || 10, fontName: b.fontFamily, block: b,
+  }));
+
+  // ratio tolerances: our pages mix 86pt headings with 8pt table bodies, so absolute 3pt is
+  // wrong at both ends (pdfplumber's *_tolerance_ratio option exists for exactly this).
+  const reconBlocks = reconstruct(units, {
+    yToleranceRatio: 0.4,       // same-baseline band (was |Δy| ≤ 0.4×size)
+    xToleranceRatio: 0.08,      // ≤0.08em = a kerning/TJ split → join tight; any real word gap → space
+    columnGapRatio: 2.0,        // a gutter splits a physical line into column fragments
+    paragraphGapRatio: 1.45,    // top→top leading for paragraph merge
+    minXOverlap: 0.5,
+    maxSizeRatio: 1.15,
+    rowSiblingGuard: true,
+  });
+
+  const out: TextBlockIR[] = [];
+  for (const rb of reconBlocks) {
+    const members = rb.lines.flatMap((l) => l.units.map((u) => u.block));
+    if (members.length === 1 && rb.lines.length === 1) {
+      // untouched single run — keep the original block verbatim
+      out.push(members[0]);
+      continue;
     }
-  }
-  const groups = new Map<number, TextBlockIR[]>();
-  blocks.forEach((b, i) => { const r = find(i); (groups.get(r) || groups.set(r, []).get(r)!).push(b); });
-
-  // Order runs WITHIN one line for joining. Generators differ: some emit mixed lines in LOGICAL
-  // order, others in VISUAL (left→right) order — so stream order is NOT reliable. Position is:
-  // an RTL line reads right→left, so x-DESCENDING run order == logical reading order in both
-  // cases (each run — a Hebrew word / a phone number / a Latin token — stays atomic).
-  const lineOrder = (grp: TextBlockIR[]): TextBlockIR[] => {
-    const rtl = isRtlText(grp.map((g) => g.text).join(' '));
-    const lineOf = (g: TextBlockIR) => Math.round(g.y / Math.max(4, g.fontSize * 0.7));
-    return [...grp].sort((a2, b2) => lineOf(a2) - lineOf(b2) || (rtl ? (b2.x + b2.width) - (a2.x + a2.width) : a2.x - b2.x));
-  };
-
-  const mergeGroup = (grp0: TextBlockIR[], joiner: string): TextBlockIR => {
-    const grp = joiner === ' ' ? lineOrder(grp0) : grp0;
-    const longest = grp.reduce((m, b) => (b.text.length > m.text.length ? b : m), grp[0]);
-    const x0 = Math.min(...grp.map((b) => b.x)), y0 = Math.min(...grp.map((b) => b.y));
-    const x1 = Math.max(...grp.map((b) => b.x + b.width)), y1 = Math.max(...grp.map((b) => b.y + b.height));
-    const text = grp.map((b) => b.text.trim()).filter(Boolean).join(joiner);
-    const rtl = isRtlText(text);
-    return {
+    const longest = members.reduce((m, b) => (b.text.length > m.text.length ? b : m), members[0]);
+    const rtl = rb.rtl;
+    out.push({
       ...longest,
-      x: x0, y: y0, width: x1 - x0, height: y1 - y0,
-      originalBBox: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 },
-      text, originalText: text,
-      fontSize: Math.max(...grp.map((b) => b.fontSize)),
+      x: rb.x0, y: rb.top, width: rb.x1 - rb.x0, height: rb.bottom - rb.top,
+      originalBBox: { x: rb.x0, y: rb.top, width: rb.x1 - rb.x0, height: rb.bottom - rb.top },
+      text: rb.text, originalText: rb.text,
+      fontSize: rb.size,
+      lineHeight: rb.lineHeightRatio ?? longest.lineHeight ?? 1.2,
       direction: rtl ? 'rtl' : 'ltr',
       align: rtl ? 'end' : 'start',
-    };
-  };
-
-  const lines: TextBlockIR[] = [];
-  for (const grp of groups.values()) lines.push(grp.length === 1 ? grp[0] : mergeGroup(grp, ' '));
-  lines.sort((a, b) => a.y - b.y || a.x - b.x);
-
-  // ---- phase 2: paragraphs (stacked prose lines; table rows excluded) ----
-  const isProse = (b: TextBlockIR) => b.text.trim().split(/\s+/).length >= 2 || b.text.trim().length >= 14;
-  const hasRowSibling = (i: number) => lines.some((o, j) => j !== i
-    && Math.abs(o.y - lines[i].y) < Math.min(o.fontSize, lines[i].fontSize) * 0.5
-    && (Math.max(o.x, lines[i].x) - Math.min(o.x + o.width, lines[i].x + lines[i].width)) > 0);
-  const par2 = lines.map((_, i) => i);
-  const find2 = (i: number): number => (par2[i] === i ? i : (par2[i] = find2(par2[i])));
-  for (let i = 0; i < lines.length; i++) {
-    const a = lines[i];
-    if (!isProse(a) || hasRowSibling(i)) continue;
-    for (let j = i + 1; j < lines.length; j++) {
-      const b = lines[j];
-      if (!isProse(b) || hasRowSibling(j)) continue;
-      const fa = a.fontSize, fb = b.fontSize;
-      if (Math.max(fa, fb) / Math.min(fa, fb) > 1.15) continue;
-      const vgap = b.y - (a.y + a.height);
-      if (vgap < -2 || vgap > Math.min(fa, fb) * 0.55) continue; // real paragraph leading only
-      const xOverlap = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
-      if (xOverlap < Math.min(a.width, b.width) * 0.5) continue;
-      par2[find2(i)] = find2(j);
-    }
-  }
-  const groups2 = new Map<number, TextBlockIR[]>();
-  lines.forEach((b, i) => { const r = find2(i); (groups2.get(r) || groups2.set(r, []).get(r)!).push(b); });
-  const out: TextBlockIR[] = [];
-  for (const grp of groups2.values()) {
-    if (grp.length === 1) { out.push(grp[0]); continue; }
-    grp.sort((a, b) => a.y - b.y);
-    const m = mergeGroup(grp, '\n');
-    // real leading from the source: distance between consecutive line tops / font size
-    const lead = (grp[1].y - grp[0].y) / Math.max(1, m.fontSize);
-    m.lineHeight = Math.min(1.8, Math.max(1.05, Math.round(lead * 100) / 100));
-    out.push(m);
+    });
   }
   return [...out, ...rotated].sort((a, b) => a.y - b.y || a.x - b.x);
 }
