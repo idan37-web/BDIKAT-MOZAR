@@ -159,6 +159,44 @@ const expect = (name: string, pass: boolean) => checks.push({ name, pass });
   expect('T6 impossible content is FLAGGED, never silently clipped', impossible.overflow);
 }
 
+// ---------------------------------------------------------------------------
+// T5 — glyph-outline export (gated behind exportMode: 'outlines')
+// ---------------------------------------------------------------------------
+{
+  const { exportPdf } = await import('../src/pdf/exportPdf');
+  const { openFont, outlineLineWidth } = await import('../src/engine/glyphExport');
+  const mk = (id: string, y: number, text: string) => ({
+    id, type: 'text', x: 20, y, width: 360, height: 30, rotation: 0, zIndex: 1, source: 'user',
+    originalBBox: { x: 20, y, width: 360, height: 30 }, text, originalText: text,
+    fontFamily: 'x', fontSize: 20, fontWeight: 400, lineHeight: 1.2, color: '#111111', direction: 'rtl', align: 'end',
+  });
+  const doc = { id: 'd', brand: 'peugeot', pages: [{ id: 'p', width: 400, height: 120, rotation: 0, blocks: [mk('t1', 20, 'מחיר: 149,900 ₪ (GT)'), mk('t2', 60, 'מנוע 1.2 PureTech טורבו')] }] };
+  const fontBytes = new Uint8Array(readFileSync('src/assets/PeugeotNewHebrew-Regular.otf'));
+  const textPdf = await exportPdf(doc as never, fontBytes, undefined, { exportMode: 'text' });
+  const outPdf = await exportPdf(doc as never, fontBytes, undefined, { exportMode: 'outlines' });
+  // pdf-lib compresses object streams, so inspect via PyMuPDF (the project's pixel/structure oracle)
+  const { writeFileSync, rmSync, mkdtempSync } = await import('node:fs');
+  const { execFileSync } = await import('node:child_process');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(`${tmpdir()}/t5-`);
+  writeFileSync(`${dir}/text.pdf`, Buffer.from(textPdf));
+  writeFileSync(`${dir}/out.pdf`, Buffer.from(outPdf));
+  const py = execFileSync('python3', ['-c', `
+import fitz
+t=fitz.open('${dir}/text.pdf'); o=fitz.open('${dir}/out.pdf')
+tp=t[0]; op=o[0]
+ink=op.get_pixmap().samples
+print(len(tp.get_fonts()), len(op.get_fonts()), len(tp.get_text().strip())>0, any(b<250 for b in ink[:400000]))
+`]).toString().trim().split(' ');
+  rmSync(dir, { recursive: true, force: true });
+  expect('T5 text mode embeds a font + selectable text', Number(py[0]) > 0 && py[2] === 'True');
+  expect('T5 outlines mode: ZERO fonts (pure vector paths)', Number(py[1]) === 0);
+  expect('T5 outlines still paint visible ink', py[3] === 'True');
+  expect('T5 outlines PDF is a real, non-trivial PDF', Buffer.from(outPdf).toString('latin1', 0, 5) === '%PDF-' && outPdf.length > 20_000);
+  const fk = openFont(fontBytes);
+  expect('T5 fontkit layout metrics available (advance > 0)', outlineLineWidth(fk, 'שלום', 20) > 10);
+}
+
 let ok = true;
 for (const c of checks) { console.log(`${c.pass ? '✓' : '✗'} ${c.name}`); if (!c.pass) ok = false; }
 if (!ok) { console.error('ENGINE VERIFY FAILED'); process.exit(1); }

@@ -75,6 +75,35 @@ npx vite build --config vite.singlefile.config.ts   # -> dist-single/index.html 
 - ✅ **9 — persistence + PWA/offline** — IndexedDB library/projects (Milestone C) **+ this round's PWA layer**
   (see "Round 11"). `npm run verify:persistence` + `npm run verify:pwa`.
 
+## Round 17 — Reference Playbook T1–T6 (docs/REFERENCE_PLAYBOOK.md) executed in full
+Ran continuously in the recommended order (T1, T3, T4, T2, T6, T5); one commit per task; every
+task verified against real brand fixtures; all 12 existing gates stayed green throughout.
+- **T1** `src/engine/textRecon.ts` — pdfplumber WordExtractor port (cluster_objects,
+  char_begins_new_word with direction-normalized RTL coords, ratio tolerances, column split,
+  paragraph building). `clusterTextBlocks` now runs on it; kerning/TJ splits join tight (≤0.08em)
+  — fixes sporadic glued/spurious-spaced words. C3: 766 raw items → 474 blocks; a contiguous
+  marketing paragraph is exactly ONE block; "מנוע 1.2 ל׳ טורבו MHEV" reads logically.
+- **T3** `src/editor/layerMath.ts` — pdf.js overlay math: blocks positioned in page-relative
+  PERCENTAGES, font sizes via `calc(pt × var(--scale-factor))`, hairlines via CSS max(), image
+  crops in wrapper-%. Zoom = container size + ONE CSS var; no per-block JS repositioning.
+  Real-browser e2eSmoke green.
+- **T4** `src/engine/bidi.ts` — the one canonical bidi seam (UAX #9 L1–L2 via bidi-js; per
+  wrapped LINE; never hand-reverse; LTR-bracket refinement kept). `pdf/hebrew.ts` is a shim.
+- **T2** `src/engine/gridDetect.ts` — pdfplumber table strategies: "lines" (snap 3 → join 3 →
+  intersections 1 → smallest-cell grid → contiguous tables) now runs FIRST off the extracted
+  ruling-line shapes; the RTL column-anchor method stays as the borderless fallback. 3008's spec
+  now reads as a real 4-COLUMN grid (category column included); C5's matrix reads from its rules.
+  Strategy "text" (alignment edges, ≥3-word columns, word-set dedupe) implemented + unit-tested.
+- **T6** `src/engine/autofit.ts` — binary-search fitText (10 iters + final guarantee pass at the
+  ROUNDED-DOWN size; wraps logical, measures VISUAL per line). Wired into fitTextBlock's shrink
+  stage; floor/grow-box/flag semantics unchanged.
+- **T5** `src/engine/glyphExport.ts` — gated `exportMode:'outlines'`: every text run drawn as
+  vector glyph paths via @pdf-lib/fontkit `layout()` (GSUB/GPOS applied; direction 'ltr' at
+  layout since T4 already produced visual order — 'rtl' would re-reverse). Pixel-verified:
+  correct RTL, ZERO fonts in the PDF, ink present. Default export unchanged ('text').
+- New gate `npm run verify:engine` (T1/T2/T3/T4/T5/T6 sections, unit + real-fixture + PyMuPDF
+  oracle). 14 suites green; `tsc` clean; builds + PWA green.
+
 ## Round 16 — REGRESSION FIX: paragraphs must never become tables + simplification
 Round 15's edit-path reconstruction ran on ANY page with ≥20 text blocks — so marketing/prose pages
 (5008 battery, i-Cockpit, LKA spreads) had their paragraph lines converted into bordered "tables".

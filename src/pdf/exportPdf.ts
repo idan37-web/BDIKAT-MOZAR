@@ -11,6 +11,9 @@ import {
 import fontkit from '@pdf-lib/fontkit';
 import { logicalToVisual } from './hebrew';
 import { wrapText } from '../catalog/autofit';
+import { drawLineOutlines, openFont } from '../engine/glyphExport';
+
+type OutlineFont = ReturnType<typeof openFont>;
 import type { DocumentIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
 import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction } from '../types/catalog';
 
@@ -157,7 +160,7 @@ export function planTextLines(
   return { lines, drawSize: fontSize };
 }
 
-function drawTextBlock(page: PDFPage, pageH: number, tb: TextBlockIR, font: Awaited<ReturnType<PDFDocument['embedFont']>>): void {
+function drawTextBlock(page: PDFPage, pageH: number, tb: TextBlockIR, font: Awaited<ReturnType<PDFDocument['embedFont']>>, outlineFont?: OutlineFont): void {
   const size = tb.fontSize;
   const color = hexToRgb(tb.color);
   // rotated run (vertical sidebar): rotate the page CTM around the baseline-left point —
@@ -184,6 +187,12 @@ function drawTextBlock(page: PDFPage, pageH: number, tb: TextBlockIR, font: Awai
     if (tb.direction === 'rtl' || tb.align === 'end') x = tb.x + tb.width - tw;
     else if (tb.align === 'center') x = tb.x + (tb.width - tw) / 2;
     const y = pageH - tb.y - drawSize * 0.85 - li * drawGap;
+    // T5 (gated): outline mode draws the line as vector glyph PATHS — viewer-independent print
+    // masters (no selectable text). Default remains glyph-by-glyph text draws.
+    if (outlineFont) {
+      drawLineOutlines(page, outlineFont, visual, x, y, drawSize, color);
+      continue;
+    }
     // Draw glyph-by-glyph at explicit x: we already reordered to VISUAL order, and
     // positioning each glyph absolutely prevents the PDF VIEWER from re-applying bidi
     // (which would otherwise reverse numbers / flip a line that starts with Hebrew).
@@ -260,12 +269,19 @@ function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: Em
   }
 }
 
-export async function exportPdf(doc: DocumentIR, fontBytes: Uint8Array, boldBytes?: Uint8Array): Promise<Uint8Array> {
+export interface ExportOptions {
+  /** 'text' (default): selectable glyph-positioned text. 'outlines' (T5, gated): every text run
+   * drawn as vector glyph paths — viewer-independent print master, not selectable. */
+  exportMode?: 'text' | 'outlines';
+}
+
+export async function exportPdf(doc: DocumentIR, fontBytes: Uint8Array, boldBytes?: Uint8Array, opts: ExportOptions = {}): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   const font = await pdf.embedFont(fontBytes, { subset: false }); // full embed (Stage 0 finding)
   // bold variant for bold text/headings; falls back to regular when no bold font is supplied
   const fontBold = boldBytes ? await pdf.embedFont(boldBytes, { subset: false }) : font;
+  const outlineFont = opts.exportMode === 'outlines' ? openFont(fontBytes) : undefined;
   const imgCache = new Map<string, PDFImage | null>();
 
   for (const page of doc.pages) {
@@ -282,7 +298,7 @@ export async function exportPdf(doc: DocumentIR, fontBytes: Uint8Array, boldByte
       } else if (isTableBlock(b)) {
         drawTableBlock(p, page.height, b, font, fontBold);
       } else if (isTextBlock(b)) {
-        drawTextBlock(p, page.height, b, (b.fontWeight ?? 400) >= 600 ? fontBold : font);
+        drawTextBlock(p, page.height, b, (b.fontWeight ?? 400) >= 600 ? fontBold : font, outlineFont);
       }
     }
   }
