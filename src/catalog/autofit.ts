@@ -4,6 +4,7 @@
 // RTL is preserved (wrapping is on words in logical order; visual order is applied later).
 import type { DocumentIR, TextBlockIR, TableBlockIR } from '../types/catalog';
 import { isTextBlock } from '../types/catalog';
+import { fitText } from '../engine/autofit';
 
 /** Width of `text` at `fontSize`, in the SAME units as the box (PDF points). */
 export type Measure = (text: string, fontSize: number) => number;
@@ -58,17 +59,16 @@ export function fitTextBlock(b: TextBlockIR, measure: Measure, pageHeight: numbe
   const lh = b.lineHeight || 1.2;
   const floor = Math.max(5, b.fontSize * minScale);
   const maxBottom = pageHeight - 6;
-  let size = b.fontSize;
-  for (;;) {
-    const lines = wrapText(b.text, b.width, size, measure);
-    const needed = lines.length * size * lh;
-    if (needed <= b.height + 0.5) return { fontSize: size, height: b.height, lines, overflow: false };
-    if (size > floor) { size = Math.max(floor, Math.round((size - 0.5) * 10) / 10); continue; }
-    // at the floor: grow the box downward within the page
-    const room = maxBottom - b.y;
-    if (needed <= room + 0.5) return { fontSize: size, height: needed, lines, overflow: false };
-    return { fontSize: size, height: Math.max(b.height, room), lines, overflow: true }; // flagged
-  }
+  // T6 (playbook): binary-search the largest size in [floor, design] whose logically-wrapped
+  // lines fit the box (per-line VISUAL width via bidi) — replaces the linear shrink loop.
+  const fit = fitText(b.text, { w: b.width, h: b.height }, measure, wrapText, floor, b.fontSize, lh);
+  if (!fit.overflow) return { fontSize: fit.size, height: b.height, lines: fit.lines, overflow: false };
+  // at the floor: grow the box downward within the page
+  const lines = wrapText(b.text, b.width, floor, measure);
+  const needed = lines.length * floor * lh;
+  const room = maxBottom - b.y;
+  if (needed <= room + 0.5) return { fontSize: floor, height: needed, lines, overflow: false };
+  return { fontSize: floor, height: Math.max(b.height, room), lines, overflow: true }; // flagged
 }
 
 export interface AutofitWarning { pageId: string; blockId: string; msg: string; }

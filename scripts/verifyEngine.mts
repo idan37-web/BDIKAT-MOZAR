@@ -141,6 +141,24 @@ const expect = (name: string, pass: boolean) => checks.push({ name, pass });
   expect('T2 real: RTL cell text correct (label+value pair present)', dt.tables.some((t) => t.rows.some((r) => r.cells.join('|').includes('מספר שסתומים') && r.cells.includes('12'))));
 }
 
+// ---------------------------------------------------------------------------
+// T6 — auto-fit binary search (wrap logical, measure visual per line)
+// ---------------------------------------------------------------------------
+{
+  const { fitText } = await import('../src/engine/autofit');
+  const { wrapText } = await import('../src/catalog/autofit');
+  const measure = (t: string, s: number) => t.length * s * 0.5; // deterministic monospace-ish
+  const box = { w: 120, h: 22 };
+  const short = fitText('C3', box, measure, wrapText, 6, 24, 1.35);
+  const long = fitText('פיג׳ו 5008 GT היברידי בנזין 7 מושבים', box, measure, wrapText, 6, 24, 1.35);
+  expect('T6 short name fits at (near-)max size', !short.overflow && short.size >= 15);
+  expect('T6 long name fits the SAME slot at a smaller size', !long.overflow && long.size < short.size && long.size >= 6);
+  const both = [short, long].every((f) => f.lines.every((l) => measure(l, f.size) <= box.w + 0.5) && f.lines.length * f.size * 1.35 <= box.h + 0.5);
+  expect('T6 no clipping: every line fits width and height', both);
+  const impossible = fitText('א'.repeat(4000), { w: 30, h: 8 }, measure, wrapText, 6, 24, 1.35);
+  expect('T6 impossible content is FLAGGED, never silently clipped', impossible.overflow);
+}
+
 let ok = true;
 for (const c of checks) { console.log(`${c.pass ? '✓' : '✗'} ${c.name}`); if (!c.pass) ok = false; }
 if (!ok) { console.error('ENGINE VERIFY FAILED'); process.exit(1); }
