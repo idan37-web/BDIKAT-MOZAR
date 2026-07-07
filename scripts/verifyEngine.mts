@@ -9,7 +9,7 @@ const expect = (name: string, pass: boolean) => checks.push({ name, pass });
 // T1 — text reconstruction (pdfplumber port)
 // ---------------------------------------------------------------------------
 {
-  const { reconstruct, cluster1d, beginsNewSegment } = await import('../src/engine/textRecon');
+  const { cluster1d, beginsNewSegment } = await import('../src/engine/textRecon');
 
   // unit: 1-D clusterer (pdfplumber cluster_objects semantics — chain by previous value)
   const cl = cluster1d([1, 2, 3, 10, 11, 30], (v) => v, 3);
@@ -27,7 +27,7 @@ const expect = (name: string, pass: boolean) => checks.push({ name, pass });
   const { importPdf } = await import('../src/pdf/importPdf');
   const b = readFileSync('project/uploads/CITROEN/PRIVATE/C3.pdf');
   const doc = await importPdf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), 'C3.pdf', { renderPreviews: false });
-  const texts = doc.pages.flatMap((p) => p.blocks).filter((bl) => bl.type === 'text') as { text: string }[];
+  const texts = doc.pages.flatMap((p) => p.blocks).filter((bl) => bl.type === 'text') as unknown as { text: string }[];
   const intro = texts.filter((t) => t.text.includes('הכירו את ה-C3'));
   expect('T1 contiguous marketing paragraph → one block', intro.length === 1 && intro[0].text.split('\n').length >= 3);
   const mixed = texts.find((t) => /מנוע 1\.2 ל['׳] טורבו/.test(t.text));
@@ -42,6 +42,27 @@ const expect = (name: string, pass: boolean) => checks.push({ name, pass });
   const ratio = rawN / texts.length;
   console.log(`  T1 reduction: ${rawN} raw items → ${texts.length} blocks (${ratio.toFixed(1)}:1)`);
   expect('T1 raw→block reduction reported and >1.4:1', ratio > 1.4);
+}
+
+// ---------------------------------------------------------------------------
+// T3 — editor overlay math (pdf.js rules: % positions, --scale-factor, width correction)
+// ---------------------------------------------------------------------------
+{
+  const { pctRect, scaledPx, scaledHairline, widthCorrectionScaleX, dprCanvasSize } = await import('../src/editor/layerMath');
+  const r1 = pctRect({ x: 100, y: 50, width: 200, height: 25 }, 1000, 500);
+  expect('T3 % rect is page-relative', r1.left === '10.0000%' && r1.top === '10.0000%' && r1.width === '20.0000%' && r1.height === '5.0000%');
+  // scale-invariance: the SAME rect regardless of zoom (no scale parameter exists at all)
+  const r2 = pctRect({ x: 100, y: 50, width: 200, height: 25 }, 1000, 500);
+  expect('T3 % rect is zoom-invariant (no scale in the math)', JSON.stringify(r1) === JSON.stringify(r2));
+  expect('T3 font size rides the --scale-factor CSS var', scaledPx(14.5) === 'calc(14.5px * var(--scale-factor))');
+  expect('T3 hairline never collapses', scaledHairline(0.4, 0.4).startsWith('max(0.4px, calc(0.4px'));
+  expect('T3 width correction = pdfWidth/measured', Math.abs(widthCorrectionScaleX(120, 100) - 1.2) < 1e-9);
+  const d = dprCanvasSize(400, 300, 2);
+  expect('T3 DPR canvas: dpr-backed pixels, CSS-sized to viewport', d.pixelW === 800 && d.pixelH === 600 && d.cssW === '400px');
+  // the editor renderer must not position blocks with scale-multiplied pixels any more
+  const src = readFileSync('src/app/PageView.tsx', 'utf8');
+  const scaleUses = (src.match(/\* scale/g) || []).length;
+  expect('T3 PageView: only the page CONTAINER scales (blocks are %)', scaleUses <= 2 && src.includes("'--scale-factor'"));
 }
 
 let ok = true;

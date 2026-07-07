@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import type { PageIR, TextBlockIR, ImageBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
 import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction } from '../types/catalog';
 import { TextEditOverlay } from '../editor/TextEditOverlay';
+import { pctRect, pct, scaledPx, scaledHairline } from '../editor/layerMath';
 import { edgeShadeBackground } from './imageFx';
 
 export interface CellRef { tableId: string; r: number; c: number; }
@@ -145,7 +146,9 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
     <div
       ref={pageRef}
       onMouseDown={startMarquee}
-      style={{ position: 'relative', width: w, height: h, background: '#fff', boxShadow: '0 10px 28px rgba(28,48,90,.18)', borderRadius: 2, overflow: 'hidden', flexShrink: 0 }}
+      // T3 (playbook): blocks are positioned in page-relative PERCENTAGES and sized through the
+      // pdf.js `--scale-factor` contract — zoom only changes this container's size + one CSS var.
+      style={{ position: 'relative', width: w, height: h, ['--scale-factor' as never]: String(scale), background: '#fff', boxShadow: '0 10px 28px rgba(28,48,90,.18)', borderRadius: 2, overflow: 'hidden', flexShrink: 0 }}
     >
       {showRaster && page.previewImage && (
         <img src={page.previewImage} alt="" draggable={false}
@@ -162,24 +165,23 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
             const b = blk;
             return (
               <div key={b.id} style={{
-                position: 'absolute', left: b.x * scale, top: b.y * scale, width: b.width * scale, height: b.height * scale,
-                background: b.fill || 'transparent', borderRadius: (b.radius || 0) * scale,
-                border: b.stroke ? `${Math.max(1, b.stroke.width * scale)}px solid ${b.stroke.color}` : undefined,
+                position: 'absolute', ...pctRect(b, page.width, page.height),
+                background: b.fill || 'transparent', borderRadius: scaledPx(b.radius || 0),
+                border: b.stroke ? `${scaledHairline(b.stroke.width, 1)} solid ${b.stroke.color}` : undefined,
                 opacity: (compare ? 0.6 : 1) * (b.opacity ?? 1), pointerEvents: 'none',
               }} />
             );
           }
           const b = blk as ImageBlockIR;
           const selected = isSel(b.id);
-          const boxW = b.width * scale, boxH = b.height * scale;
-          // crop = source-fraction window to SHOW: scale the image up and offset so only that window
-          // fills the box (the wrapper clips the rest). No crop → fill the box with objectFit.
+          // crop = source-fraction window to SHOW: scale the image up (in % of the wrapper — fully
+          // zoom-free) and offset so only that window fills the box; the wrapper clips the rest.
           const c = b.crop && b.crop.fw > 0 && b.crop.fh > 0 ? b.crop : null;
           const imgStyle: React.CSSProperties = c
-            ? { position: 'absolute', width: boxW / c.fw, height: boxH / c.fh, left: -c.fx * (boxW / c.fw), top: -c.fy * (boxH / c.fh), objectFit: 'fill' }
+            ? { position: 'absolute', width: `${100 / c.fw}%`, height: `${100 / c.fh}%`, left: `${(-c.fx * 100) / c.fw}%`, top: `${(-c.fy * 100) / c.fh}%`, objectFit: 'fill' }
             : { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: b.fit || 'cover' };
           return (
-            <span key={b.id} style={{ position: 'absolute', left: b.x * scale, top: b.y * scale, width: boxW, height: boxH, overflow: 'hidden', outline: selected ? '1.5px solid var(--accent)' : 'none' }}>
+            <span key={b.id} style={{ position: 'absolute', ...pctRect(b, page.width, page.height), overflow: 'hidden', outline: selected ? '1.5px solid var(--accent)' : 'none' }}>
               <img src={b.src} alt="" draggable={false}
                 onMouseDown={interactive ? (e) => startMove(b, e) : undefined}
                 style={{
@@ -196,8 +198,8 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
               {b.stroke && (
                 <span style={{
                   position: 'absolute', inset: 0, pointerEvents: 'none',
-                  border: `${Math.max(0.5, b.stroke.width * scale)}px solid ${b.stroke.color}`,
-                  borderRadius: (b.radius || 0) * scale, boxSizing: 'border-box',
+                  border: `${scaledHairline(b.stroke.width)} solid ${b.stroke.color}`,
+                  borderRadius: scaledPx(b.radius || 0), boxSizing: 'border-box',
                   opacity: compare ? 0.6 : 1,
                 }} />
               )}
@@ -208,25 +210,26 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
       {/* table blocks (editable spec grid) */}
       {showBlocks && page.blocks.filter(isTableBlock).filter((b) => !b.deleted).map((b: TableBlockIR) => {
         const selected = isSel(b.id);
-        const rh = b.rows.length ? b.height / b.rows.length : b.rowHeight;
+        const nRows = Math.max(1, b.rows.length);
+        const rowTop = (r: number) => `${((100 * r) / nRows).toFixed(4)}%`;
+        const rowH = `${(100 / nRows).toFixed(4)}%`;
         return (
           <div key={b.id}
             onMouseDown={interactive ? (e) => startMove(b, e) : undefined}
             style={{
-              position: 'absolute', left: b.x * scale, top: b.y * scale, width: b.width * scale, height: b.height * scale,
+              position: 'absolute', ...pctRect(b, page.width, page.height),
               opacity: compare ? 0.6 : 1, cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
               outline: selected ? '1.5px solid var(--accent)' : 'none', background: b.cellBg || 'transparent',
             }}>
             {b.rows.map((row, r) => {
-              const top = r * rh * scale;
               if (row.kind === 'section') {
                 return (
                   <div key={r} dir="rtl" onDoubleClick={interactive ? (e) => { e.stopPropagation(); onStartEditCell?.({ tableId: b.id, r, c: 0 }); } : undefined}
-                    style={{ position: 'absolute', left: 0, top, width: b.width * scale, height: rh * scale,
-                      display: 'flex', alignItems: 'center', justifyContent: 'flex-start', padding: `0 ${3 * scale}px`,
-                      fontFamily: fontFamily || b.fontFamily, fontSize: b.fontSize * scale, fontWeight: 700,
+                    style={{ position: 'absolute', left: 0, top: rowTop(r), width: '100%', height: rowH,
+                      display: 'flex', alignItems: 'center', justifyContent: 'flex-start', padding: `0 ${scaledPx(3)}`,
+                      fontFamily: fontFamily || b.fontFamily, fontSize: scaledPx(b.fontSize), fontWeight: 700,
                       background: b.sectionBg || 'transparent',
-                      color: compare ? 'rgba(20,40,120,.55)' : (b.headingColor || b.color), borderBottom: `${Math.max(0.5, 0.6 * scale)}px solid ${b.gridColor || '#d7dade'}`, overflow: 'hidden' }}>
+                      color: compare ? 'rgba(20,40,120,.55)' : (b.headingColor || b.color), borderBottom: `${scaledHairline(0.6)} solid ${b.gridColor || '#d7dade'}`, overflow: 'hidden' }}>
                     {editingCell && editingCell.tableId === b.id && editingCell.r === r ? (
                       <input autoFocus dir="rtl" defaultValue={row.cells[0] || ''}
                         onMouseDown={(e) => e.stopPropagation()}
@@ -239,17 +242,16 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
               }
               return Array.from({ length: b.columns }).map((_, c) => {
                 const leftFrac = columnLeftFraction(b.colFractions, c);
-                const cw = (b.colFractions[c] || 0) * b.width;
                 const isLabel = c === 0;
                 const editingThis = editingCell && editingCell.tableId === b.id && editingCell.r === r && editingCell.c === c;
                 return (
                   <div key={c} dir="rtl" onDoubleClick={interactive ? (e) => { e.stopPropagation(); onStartEditCell?.({ tableId: b.id, r, c }); } : undefined}
-                    style={{ position: 'absolute', left: leftFrac * b.width * scale, top, width: cw * scale, height: rh * scale,
-                      display: 'flex', alignItems: 'center', justifyContent: isLabel ? 'flex-start' : 'center', padding: `0 ${3 * scale}px`,
-                      fontFamily: fontFamily || b.fontFamily, fontSize: b.fontSize * scale, fontWeight: row.kind === 'header' ? 700 : 400,
+                    style={{ position: 'absolute', left: `${(leftFrac * 100).toFixed(4)}%`, top: rowTop(r), width: `${((b.colFractions[c] || 0) * 100).toFixed(4)}%`, height: rowH,
+                      display: 'flex', alignItems: 'center', justifyContent: isLabel ? 'flex-start' : 'center', padding: `0 ${scaledPx(3)}`,
+                      fontFamily: fontFamily || b.fontFamily, fontSize: scaledPx(b.fontSize), fontWeight: row.kind === 'header' ? 700 : 400,
                       color: compare ? 'rgba(20,40,120,.55)' : (row.kind === 'header' ? (b.headingColor || b.color) : b.color),
-                      borderBottom: `${Math.max(0.4, 0.4 * scale)}px solid ${b.gridColor || '#d7dade'}`,
-                      borderInlineStart: c < b.columns - 1 ? `${Math.max(0.4, 0.4 * scale)}px solid ${b.gridColor || '#d7dade'}` : undefined,
+                      borderBottom: `${scaledHairline(0.4, 0.4)} solid ${b.gridColor || '#d7dade'}`,
+                      borderInlineStart: c < b.columns - 1 ? `${scaledHairline(0.4, 0.4)} solid ${b.gridColor || '#d7dade'}` : undefined,
                       overflow: 'hidden', whiteSpace: 'nowrap' }}>
                     {editingThis ? (
                       <input autoFocus dir="rtl" defaultValue={row.cells[c] ?? ''}
@@ -275,9 +277,9 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
         // a single-line box must not wrap (matches the vector export, which clips to the box)
         const oneLine = b.height <= b.fontSize * (b.lineHeight || 1.2) * 1.5;
         // export-parity shrink: single lines whose brand-font width exceeds the box render at the
-        // same reduced size the export will use (no more visually clipped narrow cells)
+        // same reduced size the export will use. The ratio is scale-invariant — measure in points.
         const fit = oneLine
-          ? oneLineFitFactor(b.text.replace(/\s*\n\s*/g, ' '), fontFamily || b.fontFamily, b.fontWeight || 400, b.fontSize * scale, b.width * scale + 1)
+          ? oneLineFitFactor(b.text.replace(/\s*\n\s*/g, ' '), fontFamily || b.fontFamily, b.fontWeight || 400, b.fontSize, b.width + 0.5)
           : 1;
         return (
           <div key={b.id}
@@ -285,9 +287,8 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
             onMouseDown={interactive ? (e) => startMove(b, e) : undefined}
             onDoubleClick={interactive ? (e) => { e.stopPropagation(); onStartEdit?.(b.id); } : undefined}
             style={{
-              position: 'absolute', left: b.x * scale, top: b.y * scale,
-              width: b.width * scale, height: b.height * scale,
-              fontSize: b.fontSize * scale * fit, lineHeight: b.lineHeight,
+              position: 'absolute', ...pctRect(b, page.width, page.height),
+              fontSize: scaledPx(b.fontSize * fit), lineHeight: b.lineHeight,
               fontFamily: fontFamily || b.fontFamily, fontWeight: b.fontWeight,
               color: compare ? 'rgba(20,40,120,.55)' : b.color,
               whiteSpace: oneLine ? 'nowrap' : 'pre-wrap', overflow: 'hidden',
@@ -312,8 +313,8 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
             style={{
               position: 'absolute', width: 10, height: 10, background: '#fff', border: '2px solid var(--accent)', borderRadius: 2, zIndex: 50,
               cursor: c === 'nw' || c === 'se' ? 'nwse-resize' : 'nesw-resize',
-              left: (c.includes('w') ? b.x : b.x + b.width) * scale - 5,
-              top: (c.includes('n') ? b.y : b.y + b.height) * scale - 5,
+              left: `calc(${pct(c.includes('w') ? b.x : b.x + b.width, page.width)} - 5px)`,
+              top: `calc(${pct(c.includes('n') ? b.y : b.y + b.height, page.height)} - 5px)`,
             }} />
         ));
       })()}
