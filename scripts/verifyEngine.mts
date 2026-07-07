@@ -87,6 +87,60 @@ const expect = (name: string, pass: boolean) => checks.push({ name, pass });
   expect('T4 pure-RTL visual = char reversal (L2)', v5 === [...'שלום עולם'].reverse().join(''));
 }
 
+// ---------------------------------------------------------------------------
+// T2 — table detection (pdfplumber lines + text strategies)
+// ---------------------------------------------------------------------------
+{
+  const { snapEdges, joinEdges, findIntersections, intersectionsToCells, cellsToTables, textStrategyEdges, detectGridTables } = await import('../src/engine/gridDetect');
+  type E = { x0: number; x1: number; top: number; bottom: number; orientation: 'h' | 'v' };
+  // synthetic 3×4 ruled grid (4 v-lines × 5 h-lines → 12 cells), with jitter within SNAP_TOLERANCE
+  const vs: E[] = [0, 100, 200, 300].map((x) => ({ orientation: 'v', x0: x + (x ? 1 : 0), x1: x + (x ? 1 : 0), top: 0, bottom: 400 }));
+  const hs: E[] = [0, 100, 200, 300, 400].map((y) => ({ orientation: 'h', x0: 0, x1: 300, top: y + 0.5, bottom: y + 0.5 }));
+  const snapped = joinEdges(snapEdges([...vs, ...hs]));
+  const cells = intersectionsToCells(findIntersections(snapped));
+  expect('T2 A: 4×5 ruled lines → exactly 12 smallest cells', cells.length === 12);
+  const tables = cellsToTables(cells);
+  expect('T2 A: cells group into ONE table with a 4-row × 3-col grid', tables.length === 1 && tables[0].rows.length === 5 && tables[0].cols.length === 4);
+  // split grids stay separate tables
+  const far: E[] = [
+    { orientation: 'v', x0: 500, x1: 500, top: 0, bottom: 100 }, { orientation: 'v', x0: 600, x1: 600, top: 0, bottom: 100 },
+    { orientation: 'h', x0: 500, x1: 600, top: 0, bottom: 0 }, { orientation: 'h', x0: 500, x1: 600, top: 100, bottom: 100 },
+  ];
+  expect('T2 A: disjoint grids → separate tables', detectGridTables([...vs, ...hs, ...far]).length === 2);
+
+  // Strategy B (text): borderless aligned words → edges → grid (playbook parameters)
+  const w = (x0: number, x1: number, top: number, text: string) => ({ text, x0, x1, top, bottom: top + 10, size: 10 });
+  const words = [
+    w(200, 240, 0, 'שדה1'), w(100, 120, 0, '11'),
+    w(200, 236, 20, 'שדה2'), w(100, 118, 20, '22'),
+    w(200, 238, 40, 'שדה3'), w(100, 121, 40, '33'),
+  ];
+  const bEdges = textStrategyEdges(words);
+  expect('T2 B: alignment edges derived from ≥3-word columns', bEdges.filter((e) => e.orientation === 'v').length >= 2);
+  const bTables = detectGridTables(bEdges);
+  const bGrid = bTables[0];
+  const { gridCellText } = await import('../src/engine/gridDetect');
+  const bCells = bGrid ? gridCellText(bGrid, words, true) : [];
+  const dataRows = bCells.filter((r) => r.some((c) => c.trim()));
+  const cellHits = dataRows.flat().filter((c) => c.trim()).length;
+  expect('T2 B: borderless grid → 3 data rows × 2 cols, ≥90% cells', dataRows.length === 3 && cellHits >= Math.ceil(3 * 2 * 0.9));
+
+  // REAL fixture: the Peugeot 3008 spec page has ruling lines → Strategy A reads the grid with the
+  // CATEGORY column as a real 4th column, and RTL cell text lands correctly.
+  const { createCanvas, ImageData: NapiImageData } = await import('@napi-rs/canvas');
+  (globalThis as { ImageData?: unknown }).ImageData = NapiImageData;
+  const makeCanvas = (w2: number, h2: number) => createCanvas(w2, h2) as unknown as HTMLCanvasElement;
+  const { importPdf } = await import('../src/pdf/importPdf');
+  const { detectTables, pageEdges } = await import('../src/templates/tableDetect');
+  const pb = readFileSync('project/uploads/PEUGEOT/PRIVATE/3008.pdf');
+  const pdoc = await importPdf(pb.buffer.slice(pb.byteOffset, pb.byteOffset + pb.byteLength), '3008.pdf', { renderPreviews: true, makeCanvas });
+  const pg = pdoc.pages[13];
+  const dt = detectTables(pg.blocks.filter((x) => x.type === 'text') as never, pg.width, pageEdges(pg));
+  const four = dt.tables.find((t) => t.columns === 4 && t.rows.length >= 20);
+  expect('T2 real: 3008 spec grid reads as a 4-column table (incl. category column)', !!four);
+  expect('T2 real: RTL cell text correct (label+value pair present)', dt.tables.some((t) => t.rows.some((r) => r.cells.join('|').includes('מספר שסתומים') && r.cells.includes('12'))));
+}
+
 let ok = true;
 for (const c of checks) { console.log(`${c.pass ? '✓' : '✗'} ${c.name}`); if (!c.pass) ok = false; }
 if (!ok) { console.error('ENGINE VERIFY FAILED'); process.exit(1); }

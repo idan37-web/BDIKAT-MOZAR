@@ -4,6 +4,7 @@
 // table and owns the VALUE columns to its reading-left, up to the next label column — which keeps
 // two side-by-side tables separate even though their columns interleave in x.
 import type { TextBlockIR, TableRowIR, TableBlockIR, PageIR, ShapeBlockIR } from '../types/catalog';
+import { detectGridTables, gridCellText, type Edge, type GridTable } from '../engine/gridDetect';
 
 export interface DetectedTable {
   bbox: { x: number; y: number; width: number; height: number };
@@ -137,7 +138,7 @@ function mode<T>(xs: T[]): T {
  * Detect the tables on a dense page. Returns each table plus the cells it consumed, so the caller
  * can keep the remaining cells (headings, strays) as ordinary text regions.
  */
-export function detectTables(cells: TextBlockIR[], pageWidth: number): { tables: DetectedTable[]; used: Set<string> } {
+export function detectTables(cells: TextBlockIR[], pageWidth: number, edges?: Edge[]): { tables: DetectedTable[]; used: Set<string> } {
   const raw = cells.filter((c) => c.rotation === 0 && !c.deleted && c.text.trim());
   // exclude page TITLES/headings — a table cell is body-sized; a big title (e.g. "מפרט טכני") sits
   // above the grid and must stay a separate heading slot, not be swallowed as a table section row.
@@ -145,15 +146,36 @@ export function detectTables(cells: TextBlockIR[], pageWidth: number): { tables:
   // chopped into table rows — the root of the "marketing copy became a bordered table" regression.
   const fs = raw.map((c) => c.fontSize).sort((a, b) => a - b);
   const medFont = fs[Math.floor(fs.length / 2)] || 10;
-  const flat = raw.filter((c) =>
+  let flat = raw.filter((c) =>
     c.fontSize <= medFont * 1.8 && !c.text.includes('\n') && c.height <= (c.fontSize || 10) * 2.6);
+
+  const tables: DetectedTable[] = [];
+  const used = new Set<string>();
+
+  // STRATEGY A (playbook T2, pdfplumber "lines"): when the source drew RULING LINES, snap/join
+  // them, intersect, and read the smallest-cell grid — exact rows × cols straight from the ink.
+  if (edges && edges.length >= 4) {
+    for (const gt of detectGridTables(edges)) {
+      const t = gridToDetected(gt, flat);
+      if (t) {
+        tables.push(t);
+        const inside = flat.filter((c) => {
+          const cx = c.x + c.width / 2, cy = c.y + c.height / 2;
+          return cx >= gt.x0 && cx <= gt.x1 && cy >= gt.top && cy <= gt.bottom;
+        });
+        for (const c of inside) used.add(c.id);
+      }
+    }
+    flat = flat.filter((c) => !used.has(c.id));
+  }
+
+  // STRATEGY B (borderless): our RTL-tuned column-anchor method (a pdfplumber "text"-strategy
+  // variant that keeps two INTERLEAVED side-by-side tables separate — see toColumns/groupTables).
   let cols = toColumns(flat, pageWidth);
   // drop sparse OUTLIER columns (a real grid column has many stacked cells; scattered numbers like a
   // car's dimension callouts form 1-2-cell "columns" that would bloat a table's bbox over the image).
   cols = cols.filter((c) => c.cells.length >= 3);
   const groups = groupTables(cols);
-  const tables: DetectedTable[] = [];
-  const used = new Set<string>();
   for (const g of groups) {
     const t = buildTable(g);
     if (!t) continue;
@@ -168,6 +190,59 @@ export function detectTables(cells: TextBlockIR[], pageWidth: number): { tables:
     }
   }
   return { tables, used };
+}
+
+/** Convert a Strategy-A grid into our RTL-logical DetectedTable (grid columns are left→right;
+ * logical order puts the LABEL column — the rightmost — at index 0). Rejects degenerate grids
+ * (needs ≥3 rows × ≥2 cols with ≥40% of cells carrying text). */
+function gridToDetected(gt: GridTable, cells: TextBlockIR[]): DetectedTable | null {
+  const nRows = gt.rows.length - 1, nCols = gt.cols.length - 1;
+  if (nRows < 3 || nCols < 2) return null;
+  const words = cells.map((c) => ({ text: c.text, x0: c.x, x1: c.x + c.width, top: c.y, bottom: c.y + c.height, size: c.fontSize || 10 }));
+  const grid = gridCellText(gt, words, true);
+  const filled = grid.flat().filter((t) => t.trim()).length;
+  if (filled < nRows * nCols * 0.4 || filled < 6) return null;
+  const inside = cells.filter((c) => {
+    const cx = c.x + c.width / 2, cy = c.y + c.height / 2;
+    return cx >= gt.x0 && cx <= gt.x1 && cy >= gt.top && cy <= gt.bottom;
+  });
+  if (!inside.length) return null;
+  const fsz = inside.map((c) => c.fontSize).sort((a, b) => a - b);
+  const fontSize = fsz[Math.floor(fsz.length / 2)] || 10;
+  // logical order = grid columns REVERSED (label on the right)
+  const rows: TableRowIR[] = grid.map((gr) => {
+    const logical = [...gr].reverse();
+    const label = logical[0], values = logical.slice(1);
+    if (label && !values.some((v) => v)) return { kind: 'section', cells: [label] } as TableRowIR;
+    if (!label && values.some((v) => v)) return { kind: 'header', cells: logical } as TableRowIR;
+    return { kind: 'data', cells: logical } as TableRowIR;
+  });
+  const totalW = gt.x1 - gt.x0 || 1;
+  const widths: number[] = [];
+  for (let i = nCols - 1; i >= 0; i--) widths.push((gt.cols[i + 1] - gt.cols[i]) / totalW);
+  let vals = 0, digits = 0;
+  for (const r of rows) for (const c of r.cells.slice(1)) if (c.trim()) { vals++; if (/\d/.test(c) && c.replace(/[\d.,/%+\-\s()x×]/gi, '').length <= 2) digits++; }
+  return {
+    bbox: { x: gt.x0, y: gt.top, width: gt.x1 - gt.x0, height: gt.bottom - gt.top },
+    columns: nCols, colFractions: widths, rows,
+    rowHeight: (gt.bottom - gt.top) / nRows, fontSize,
+    numeric: digits >= Math.max(3, vals * 0.3),
+    color: mode(inside.map((c) => c.color)),
+    fontFamily: mode(inside.map((c) => c.fontFamily)),
+  };
+}
+
+/** Build Strategy-A edges from a page's extracted RULING-LINE shapes (thin rects). */
+export function pageEdges(page: PageIR): Edge[] {
+  const edges: Edge[] = [];
+  for (const b of page.blocks) {
+    if (b.type !== 'shape' && b.type !== 'background') continue;
+    const s = b as ShapeBlockIR;
+    if (Math.min(s.width, s.height) > 3 || Math.max(s.width, s.height) < 8) continue;
+    if (s.height >= s.width) edges.push({ orientation: 'v', x0: s.x + s.width / 2, x1: s.x + s.width / 2, top: s.y, bottom: s.y + s.height });
+    else edges.push({ orientation: 'h', x0: s.x, x1: s.x + s.width, top: s.y + s.height / 2, bottom: s.y + s.height / 2 });
+  }
+  return edges;
 }
 
 const UNITS = /כ["׳]?ס|סמ["׳]?ק|ק["׳]?ג|ק["׳]?מ|קמ["׳]?ש|מ["׳]?מ|קוט["׳]?ש|נ["׳]?מ|\bhp\b|\bkW\b|\bNm\b/i;
@@ -237,7 +312,7 @@ export function detectedToTableBlock(t: DetectedTable, id: string, sectionBg?: s
 export function reconstructTables(page: PageIR): void {
   if (!isTablePage(page)) return; // NEVER "table" a marketing/prose page (paragraphs are units)
   const texts = page.blocks.filter((b): b is TextBlockIR => b.type === 'text');
-  const { tables, used } = detectTables(texts, page.width);
+  const { tables, used } = detectTables(texts, page.width, pageEdges(page));
   if (!tables.length) return;
 
   const shapes = page.blocks.filter((b): b is ShapeBlockIR => b.type === 'shape' || b.type === 'background');

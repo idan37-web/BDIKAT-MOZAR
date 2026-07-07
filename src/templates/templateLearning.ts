@@ -16,7 +16,7 @@ import {
   type TemplatePageSpec,
   type TemplateSpec,
 } from './templateSpec';
-import { detectTables, isTablePage } from './tableDetect';
+import { detectTables, isTablePage, pageEdges } from './tableDetect';
 
 // ---------------------------------------------------------------------------
 // Geometry helpers
@@ -142,7 +142,7 @@ export function groupRegions(page: PageIR, grouping: GroupMode = 'para'): Region
   }
   if (grouping === 'row' && !tableBlocks.length) {
     // FALLBACK (import ran with reconstructTables:false): detect tables from the raw cells here.
-    const { tables, used } = detectTables(texts, page.width);
+    const { tables, used } = detectTables(texts, page.width, pageEdges(page));
     for (const t of tables) {
       regions.push({
         blockType: 'table', bbox: t.bbox, text: t.rows.map((r) => r.cells.join(' ')).join('\n'),
