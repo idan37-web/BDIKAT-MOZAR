@@ -5,6 +5,7 @@ import type { PageIR, TextBlockIR, ImageBlockIR, TableBlockIR, BlockIR } from '.
 import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction } from '../types/catalog';
 import { TextEditOverlay } from '../editor/TextEditOverlay';
 import { pctRect, pct, scaledPx, scaledHairline } from '../editor/layerMath';
+import { wrapText } from '../catalog/autofit';
 import { edgeShadeBackground } from './imageFx';
 
 export interface CellRef { tableId: string; r: number; c: number; }
@@ -35,6 +36,9 @@ interface Props {
   onCommitCell?: () => void;
   /** ref to the page element, so a marquee can be started from outside the canvas. */
   pageRef?: React.Ref<HTMLDivElement>;
+  /** text measurer override (px width of `text` at `px` size) — canvas by default; injectable
+   * for tests/headless. Drives the F1 overflow indicator. */
+  measureText?: (text: string, family: string, weight: number, px: number) => number;
 }
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se';
@@ -58,7 +62,15 @@ function oneLineFitFactor(text: string, family: string, weight: number, px: numb
   return w > maxW ? Math.max(0.72, maxW / w) : 1;
 }
 
-export function PageView({ page, scale, mode, fontFamily, selectedId, selectedIds, editingId, onSelect, onMarquee, onStartEdit, onChangeText, onResize, onCommit, editingCell, onStartEditCell, onChangeCell, onCommitCell, pageRef }: Props) {
+/** Default measurer: shared canvas (browser); null when no 2D context (headless). */
+function canvasMeasure(text: string, family: string, weight: number, px: number): number | null {
+  if (_mctx === undefined) _mctx = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
+  if (!_mctx) return null;
+  _mctx.font = `${weight} ${px}px ${family}`;
+  return _mctx.measureText(text).width;
+}
+
+export function PageView({ page, scale, mode, fontFamily, selectedId, selectedIds, editingId, onSelect, onMarquee, onStartEdit, onChangeText, onResize, onCommit, editingCell, onStartEditCell, onChangeCell, onCommitCell, pageRef, measureText }: Props) {
   const isSel = (id: string) => selectedIds ? selectedIds.has(id) : selectedId === id;
   const singleSel = !selectedIds || selectedIds.size <= 1;
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -281,26 +293,49 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
         const fit = oneLine
           ? oneLineFitFactor(b.text.replace(/\s*\n\s*/g, ' '), fontFamily || b.fontFamily, b.fontWeight || 400, b.fontSize, b.width + 0.5)
           : 1;
+        // F1: in EDIT mode a block auto-grows to show ALL its text (min-height = the model bbox);
+        // when content exceeds the model box (which export clips to), show a visible indicator —
+        // nothing is ever silently hidden.
+        const rect = pctRect(b, page.width, page.height);
+        let overflowing = false;
+        if (interactive && !oneLine) {
+          const mt = measureText ?? canvasMeasure;
+          const m = (t: string, s: number) => mt(t, fontFamily || b.fontFamily, b.fontWeight || 400, s) ?? NaN;
+          const probe = m('אב', b.fontSize);
+          if (Number.isFinite(probe)) {
+            const contentH = wrapText(b.text, b.width, b.fontSize, m as (t: string, s: number) => number).length * b.fontSize * (b.lineHeight || 1.2);
+            overflowing = contentH > b.height + 1;
+          }
+        }
         return (
           <div key={b.id}
             dir={b.direction === 'ltr' ? 'ltr' : 'rtl'}
             onMouseDown={interactive ? (e) => startMove(b, e) : undefined}
             onDoubleClick={interactive ? (e) => { e.stopPropagation(); onStartEdit?.(b.id); } : undefined}
             style={{
-              position: 'absolute', ...pctRect(b, page.width, page.height),
+              position: 'absolute', ...rect,
+              ...(interactive ? { height: 'auto', minHeight: rect.height, overflow: 'visible' } : { overflow: 'hidden' }),
               fontSize: scaledPx(b.fontSize * fit), lineHeight: b.lineHeight,
               fontFamily: fontFamily || b.fontFamily, fontWeight: b.fontWeight,
               color: compare ? 'rgba(20,40,120,.55)' : b.color,
-              whiteSpace: oneLine ? 'nowrap' : 'pre-wrap', overflow: 'hidden',
+              whiteSpace: oneLine ? 'nowrap' : 'pre-wrap',
               // rotated runs (vertical sidebars): rotate around the baseline-left point
               ...(b.rotation ? { transform: `rotate(${b.rotation}deg)`, transformOrigin: '0 77%' } : {}),
               unicodeBidi: 'plaintext',
               textAlign: b.align === 'end' ? 'right' : b.align === 'center' ? 'center' : 'left',
               cursor: interactive ? (selected ? 'move' : 'pointer') : 'default',
-              outline: compare ? '1px dashed rgba(20,40,120,.4)' : selected ? '1.5px solid var(--accent)' : 'none',
+              outline: compare ? '1px dashed rgba(20,40,120,.4)' : overflowing ? '1.5px dashed #d62828' : selected ? '1.5px solid var(--accent)' : 'none',
               background: 'transparent',
             }}
-          >{b.text}</div>
+          >
+            {b.text}
+            {overflowing && (
+              <span data-overflow="true" title="הטקסט חורג מגבולות התיבה — בייצוא הוא ייחתך אלא אם תגדיל את התיבה"
+                style={{ position: 'absolute', top: -8, insetInlineStart: -8, width: 15, height: 15, borderRadius: '50%',
+                  background: '#d62828', color: '#fff', fontSize: 10, lineHeight: '15px', textAlign: 'center',
+                  fontFamily: 'sans-serif', pointerEvents: 'none', zIndex: 40 }}>↕</span>
+            )}
+          </div>
         );
       })}
 
