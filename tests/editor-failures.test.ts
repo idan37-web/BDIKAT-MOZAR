@@ -188,3 +188,56 @@ print(min(ys) if ys else -1)
     expect(yBot, 'bottom glyph must sit below middle').toBeGreaterThan(yMid + 5);
   }, 120_000);
 });
+
+describe('F6 — text overflowing table cells (fit per cell; grow row over sub-min font; clipped in export)', () => {
+  type TableBlockIR = import('../src/types/catalog').TableBlockIR;
+  const longVal = 'ערך ארוך במיוחד שאינו נכנס לרוחב העמודה הצרה הזאת';
+  // value column is only 0.3×200 = 60pt wide — the long value cannot fit at the base 12pt font
+  const overflowTable = (): TableBlockIR => ({
+    id: 'tb', type: 'table', x: 40, y: 40, width: 200, height: 16, rotation: 0, zIndex: 1, source: 'original',
+    originalBBox: { x: 40, y: 40, width: 200, height: 16 }, columns: 2, colFractions: [0.7, 0.3], rowHeight: 16,
+    rows: [{ kind: 'data', cells: ['תווית', longVal] }],
+    fontFamily: 'sans-serif', fontSize: 12, color: '#111418', direction: 'rtl',
+  } as TableBlockIR);
+  const crudeMeasure = (txt: string, s: number) => txt.length * s * 0.5;
+
+  it('an overflowing cell keeps a readable font — the row grows instead of shrinking below the floor', async () => {
+    const { fitTableBlock } = await import('../src/catalog/autofit');
+    const t = overflowTable();
+    fitTableBlock(t, (txt, s) => crudeMeasure(txt, s));
+    const floor = 12 * 0.7;
+    expect(t.fontSize, 'font must not shrink below the readable floor').toBeGreaterThanOrEqual(floor - 0.01);
+    expect(t.rowHeight, 'the row must grow to accommodate the wrapped cell').toBeGreaterThan(16);
+  });
+
+  it('export: no glyph escapes its cell box (per-cell fit + clip)', async () => {
+    const { readFileSync, writeFileSync, mkdtempSync } = await import('node:fs');
+    const { execFileSync } = await import('node:child_process');
+    const { tmpdir } = await import('node:os');
+    const { exportPdf } = await import('../src/pdf/exportPdf');
+    const { fitTableBlock } = await import('../src/catalog/autofit');
+    const t = overflowTable();
+    fitTableBlock(t, (txt, s) => crudeMeasure(txt, s));
+    const fontBytes = new Uint8Array(readFileSync('src/assets/PeugeotNewHebrew-Regular.otf'));
+    const doc = { id: 'd', pages: [{ id: 'p', width: 400, height: 200, rotation: 0, blocks: [t] }] };
+    const pdf = await exportPdf(doc as never, fontBytes);
+    const dir = mkdtempSync(`${tmpdir()}/f6-`);
+    writeFileSync(`${dir}/e.pdf`, Buffer.from(pdf));
+    // value cell (RTL col 1) spans x∈[40,100]; its text is right-anchored and grows LEFT, so any
+    // overflow crosses the block/cell left edge at x=40. A clip must stop every glyph at x≥40.
+    const out = execFileSync('python3', ['-c', `
+import fitz, json
+d=fitz.open('${dir}/e.pdf'); pg=d[0]; xs=[]; n=0
+for b in pg.get_text('rawdict')['blocks']:
+  for l in b.get('lines',[]):
+    for s in l.get('spans',[]):
+      for ch in s.get('chars',[]):
+        if ch['c'].strip():
+          x0,y0,x1,y1=ch['bbox']; xs.append(x0); n+=1
+print(json.dumps({'minx': min(xs) if xs else 999, 'n': n}))
+`]).toString();
+    const { minx, n } = JSON.parse(out);
+    expect(minx, 'no glyph may spill past the cell left edge (x=40)').toBeGreaterThanOrEqual(39);
+    expect(n, 'the cell content must still be drawn, not entirely clipped away').toBeGreaterThan(3);
+  }, 120_000);
+});

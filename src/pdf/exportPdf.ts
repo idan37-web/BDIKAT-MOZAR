@@ -10,11 +10,11 @@ import {
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { logicalToVisual } from './hebrew';
-import { wrapText } from '../catalog/autofit';
+import { wrapText, fitCell } from '../catalog/autofit';
 import { drawLineOutlines, openFont } from '../engine/glyphExport';
 
 type OutlineFont = ReturnType<typeof openFont>;
-import type { DocumentIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
+import type { DocumentIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, TableBlockIR, BlockIR, CellVAlign } from '../types/catalog';
 import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction, resolveVAlign, cellBaselineOffset } from '../types/catalog';
 
 function hexToRgb(hex: string): RGB {
@@ -256,24 +256,41 @@ function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: Em
   const grid = hexToRgb(tb.gridColor || '#d7dade');
   const pad = 3;
   if (tb.cellBg) page.drawRectangle({ x: tb.x, y: pageH - tb.y - tb.height, width: tb.width, height: tb.height, color: hexToRgb(tb.cellBg) });
-  const cellText = (text: string, cellX: number, cellW: number, rowTop: number, align: 'end' | 'center', size: number, col: RGB, voff: number, bold?: boolean) => {
+  // F6: fit each cell to its box (shrink toward the readable floor, then wrap), and CLIP to the cell
+  // so a glyph can never spill onto a neighbour. F5 vertical alignment is honoured per line group.
+  const cellText = (text: string, cellX: number, cellW: number, rowTop: number, align: 'end' | 'center', size: number, col: RGB, va: CellVAlign, bold?: boolean) => {
     if (!text) return;
     const f = bold ? fontBold : font;
-    const visual = logicalToVisual(text, 'rtl');
-    const tw = f.widthOfTextAtSize(visual, size);
-    const xStart = align === 'center' ? cellX + (cellW - tw) / 2 : cellX + cellW - pad - tw;
-    const y = pageH - rowTop - voff; // F5: baseline from row top per resolved vertical alignment
-    drawVisualLine(page, xStart, y, visual, size, f, col);
+    const measure = (s: string, fs: number) => f.widthOfTextAtSize(logicalToVisual(s, 'rtl'), fs);
+    const { fontSize: fs, lines } = fitCell(text, cellW - pad * 2, size, measure);
+    const cellBottom = pageH - rowTop - tb.rowHeight;
+    page.pushOperators(pushGraphicsState(), rectangle(cellX, cellBottom, cellW, tb.rowHeight), clip(), endPath());
+    if (lines.length === 1) {
+      const visual = logicalToVisual(lines[0], 'rtl');
+      const tw = f.widthOfTextAtSize(visual, fs);
+      const xStart = align === 'center' ? cellX + (cellW - tw) / 2 : cellX + cellW - pad - tw;
+      drawVisualLine(page, xStart, cellBottom + tb.rowHeight - cellBaselineOffset(va, tb.rowHeight, fs), visual, fs, f, col);
+    } else {
+      const lineGap = fs * 1.2, groupH = lines.length * lineGap, padV = Math.min(3, tb.rowHeight * 0.12);
+      const topPad = va === 'top' ? padV : va === 'bottom' ? tb.rowHeight - groupH - padV : (tb.rowHeight - groupH) / 2;
+      lines.forEach((ln, i) => {
+        const visual = logicalToVisual(ln, 'rtl');
+        const tw = f.widthOfTextAtSize(visual, fs);
+        const xStart = align === 'center' ? cellX + (cellW - tw) / 2 : cellX + cellW - pad - tw;
+        drawVisualLine(page, xStart, pageH - rowTop - topPad - i * lineGap - fs * 0.85, visual, fs, f, col);
+      });
+    }
+    page.pushOperators(popGraphicsState());
   };
 
   for (let r = 0; r < tb.rows.length; r++) {
     const row = tb.rows[r];
     const rowTop = tb.y + r * tb.rowHeight;
     const size = tb.fontSize;
-    const voff = cellBaselineOffset(resolveVAlign(tb, row), tb.rowHeight, size);
+    const va = resolveVAlign(tb, row);
     if (row.kind === 'section') {
       if (tb.sectionBg) page.drawRectangle({ x: tb.x, y: pageH - rowTop - tb.rowHeight, width: tb.width, height: tb.rowHeight, color: hexToRgb(tb.sectionBg) });
-      cellText(row.cells[0] || '', tb.x, tb.width, rowTop, 'end', size, heading, voff, true);
+      cellText(row.cells[0] || '', tb.x, tb.width, rowTop, 'end', size, heading, va, true);
     } else {
       for (let i = 0; i < tb.columns; i++) {
         const leftFrac = columnLeftFraction(tb.colFractions, i);
@@ -282,7 +299,7 @@ function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: Em
         const text = row.cells[i] ?? '';
         const isLabel = i === 0;
         const head = row.kind === 'header';
-        cellText(text, cellX, cellW, rowTop, isLabel ? 'end' : 'center', size, head ? heading : color, voff, head);
+        cellText(text, cellX, cellW, rowTop, isLabel ? 'end' : 'center', size, head ? heading : color, va, head);
       }
     }
     // horizontal rule under the row

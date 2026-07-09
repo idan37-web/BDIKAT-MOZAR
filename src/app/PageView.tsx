@@ -264,7 +264,9 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
                       color: compare ? 'rgba(20,40,120,.55)' : (row.kind === 'header' ? (b.headingColor || b.color) : b.color),
                       borderBottom: `${scaledHairline(0.4, 0.4)} solid ${b.gridColor || '#d7dade'}`,
                       borderInlineStart: c < b.columns - 1 ? `${scaledHairline(0.4, 0.4)} solid ${b.gridColor || '#d7dade'}` : undefined,
-                      overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                      // F6: wrap long cells (row height already grown by the fitter) instead of a
+                      // single clipped line; the row's overflow:hidden is still the WYSIWYG safety net.
+                      overflow: 'hidden', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.2, textAlign: isLabel ? 'right' : 'center' }}>
                     {editingThis ? (
                       <input autoFocus dir="rtl" defaultValue={row.cells[c] ?? ''}
                         onMouseDown={(e) => e.stopPropagation()}

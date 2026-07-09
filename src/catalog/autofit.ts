@@ -110,32 +110,57 @@ export function canvasMeasureFor(fontFamily: string): (b: TextBlockIR) => Measur
 /** Measure cell text at a weight — used to fit a table's font so no cell clips. */
 export type CellMeasure = (text: string, fontSize: number, bold: boolean) => number;
 
+/** F6 minimum readable table font, as a fraction of the design size — below this the row GROWS
+ * (text wraps) rather than shrinking to an unreadable size. */
+export const CELL_MIN_FONT_RATIO = 0.7;
+
 /**
- * Shrink a table's font (and grow row height for it) so EVERY cell shows its full text without
- * clipping — measuring each cell against its own column width. Alignment is unchanged (the render
- * keeps labels at the start, values centred). Mutates the table. Returns true if it changed.
+ * F6: fit ONE cell's text to its box. Shrink the font toward the readable floor to keep it on a
+ * single line; if it still overflows at the floor, WRAP (the caller grows the row). Pure — shared
+ * by the PDF export and the model-level table fit so they never disagree.
+ */
+export function fitCell(
+  text: string, cellW: number, baseFont: number, measure: Measure,
+  minFont = Math.max(5, baseFont * CELL_MIN_FONT_RATIO), maxLines = 3,
+): { fontSize: number; lines: string[] } {
+  if (!text.trim() || cellW <= 0) return { fontSize: baseFont, lines: [text] };
+  let s = baseFont;
+  while (s > minFont && measure(text, s) > cellW) s = Math.max(minFont, Math.round((s - 0.25) * 100) / 100);
+  if (measure(text, s) <= cellW) return { fontSize: s, lines: [text] };
+  // still too wide at the floor → wrap at the floor font (row must grow to hold the lines)
+  const lines = wrapLine(text, cellW, minFont, measure).slice(0, maxLines);
+  return { fontSize: minFont, lines };
+}
+
+/**
+ * F6: fit a table so EVERY cell shows its text. Per cell, shrink the font toward the readable floor
+ * (CELL_MIN_FONT_RATIO); when a cell still overflows at the floor, the row GROWS to fit the wrapped
+ * lines instead of shrinking the font into illegibility. Mutates the table. Returns true if changed.
  */
 export function fitTableBlock(t: TableBlockIR, measure: CellMeasure, padding = 6): boolean {
-  let scale = 1;
+  const minFont = Math.max(5, Math.round(t.fontSize * CELL_MIN_FONT_RATIO * 10) / 10);
+  const cells: { txt: string; bold: boolean; colW: number }[] = [];
   for (const row of t.rows) {
-    if (row.kind === 'section') {
-      const w = measure(row.cells[0] || '', t.fontSize, true);
-      const avail = t.width - padding * 2;
-      if (w > avail && avail > 0) scale = Math.min(scale, avail / w);
-      continue;
-    }
+    if (row.kind === 'section') { cells.push({ txt: row.cells[0] || '', bold: true, colW: t.width - padding * 2 }); continue; }
     const bold = row.kind === 'header';
     for (let c = 0; c < t.columns; c++) {
       const txt = row.cells[c] || '';
       if (!txt) continue;
       const colW = (t.colFractions[c] || 0) * t.width - padding * 2;
-      if (colW <= 0) continue;
-      const w = measure(txt, t.fontSize, bold);
-      if (w > colW) scale = Math.min(scale, colW / w);
+      if (colW > 0) cells.push({ txt, bold, colW });
     }
   }
-  const newFont = scale < 1 ? Math.max(5, Math.round(t.fontSize * scale * 10) / 10) : t.fontSize;
-  const newRow = Math.max(t.rowHeight, Math.ceil(newFont * 1.5));
+  // 1) shrink the shared font to fit the tightest cell, but never below the readable floor
+  let scale = 1;
+  for (const cw of cells) { const w = measure(cw.txt, t.fontSize, cw.bold); if (w > cw.colW) scale = Math.min(scale, cw.colW / w); }
+  const newFont = scale < 1 ? Math.max(minFont, Math.round(t.fontSize * scale * 10) / 10) : t.fontSize;
+  // 2) any cell that STILL overflows at the floored font must wrap → grow the row to hold the lines
+  let maxLines = 1;
+  for (const cw of cells) {
+    const w = measure(cw.txt, newFont, cw.bold);
+    if (w > cw.colW && cw.colW > 0) maxLines = Math.max(maxLines, Math.min(3, Math.ceil(w / cw.colW)));
+  }
+  const newRow = Math.max(t.rowHeight, Math.ceil(newFont * 1.5 * maxLines));
   const changed = newFont !== t.fontSize || newRow !== t.rowHeight;
   t.fontSize = newFont;
   t.rowHeight = newRow;
