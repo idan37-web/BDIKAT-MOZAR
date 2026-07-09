@@ -11,9 +11,10 @@ let workerConfigured = false;
 // pdf.js entry differs between browser (worker) and Node (verification).
 async function loadPdfjs() {
   const pdfjs = await import('pdfjs-dist');
-  if (typeof window !== 'undefined' && !workerConfigured) {
+  if (typeof window !== 'undefined' && typeof Worker !== 'undefined' && !workerConfigured) {
     // Inline worker (base64 blob): works in dev, in a normal build, AND in a single-file
-    // offline build — no separate worker URL to fetch.
+    // offline build — no separate worker URL to fetch. jsdom defines `window` but NOT `Worker`,
+    // so guard on both — there pdf.js falls back to its main-thread path (fine for tests).
     const Worker = (await import('pdfjs-dist/build/pdf.worker.min.mjs?worker&inline')).default;
     (pdfjs as any).GlobalWorkerOptions.workerPort = new Worker();
     workerConfigured = true;

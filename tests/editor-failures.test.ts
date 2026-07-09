@@ -27,6 +27,33 @@ const textBlock = (id: string, text: string, over: Partial<TextBlockIR> = {}): T
   lineHeight: 1.2, color: '#111111', direction: 'rtl', align: 'end', ...over,
 });
 
+describe('F3 — letter-spaced text must not split into characters (statistical gap classification)', () => {
+  it('the dealer strip reconstructs real words — phones contiguous, no single-character-word soup', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { importPdf } = await import('../src/pdf/importPdf');
+    const b = readFileSync('tests/fixtures/c3-dealer-strip.pdf');
+    const doc = await importPdf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), 's.pdf', { renderPreviews: false });
+    const texts = doc.pages[0].blocks.filter((bl) => bl.type === 'text') as TextBlockIR[];
+    // a phone number is ONE token (letter-spacing gaps are not word gaps)
+    expect(texts.some((t) => t.text.includes('03-6710354')), 'phone number must reconstruct contiguously').toBe(true);
+    // the strip as a whole is words, not characters
+    const words = texts.flatMap((t) => t.text.split(/\s+/)).filter(Boolean);
+    const singles = words.filter((w) => [...w].length === 1 && !/[0-9|]/.test(w)).length;
+    expect(singles / words.length, `single-char words ratio too high (${singles}/${words.length})`).toBeLessThan(0.1);
+  }, 240_000);
+
+  it('normal paragraphs keep their spacing (C3 intro paragraph words intact)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { importPdf } = await import('../src/pdf/importPdf');
+    const b = readFileSync('tests/fixtures/citroen-c3.pdf');
+    const doc = await importPdf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), 'c3.pdf', { renderPreviews: false });
+    const texts = doc.pages.flatMap((p) => p.blocks).filter((bl) => bl.type === 'text') as TextBlockIR[];
+    const intro = texts.find((t) => t.text.includes('הכירו את ה-C3'));
+    expect(intro, 'intro paragraph must exist with normal word spacing').toBeTruthy();
+    expect(intro!.text).toMatch(/רכב קומפקטי שמביא/);
+  }, 240_000);
+});
+
 describe('F1 — clipped text in blocks (edit mode must auto-grow + indicate overflow)', () => {
   // ~9 wrapped lines at width 200/size 12 with the injected measure → 3x the 30pt box
   const longText = 'מלל ארוך מאוד שנמשך ונמשך וממשיך הרבה מעבר לגובה התיבה המקורית של הבלוק הזה '.repeat(3);

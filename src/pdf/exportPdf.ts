@@ -155,6 +155,13 @@ export function planTextLines(
     while (drawSize > floor && measure(one, drawSize) > width) drawSize = Math.max(floor, drawSize - 0.25);
     return { lines: [one], drawSize };
   }
+  // F2: an IMPORTED multi-line block carries the SOURCE's own line breaks — draw them verbatim.
+  // Re-wrapping with the (wider) embedded font split a source line in two and the tail line was
+  // sliced off ("סרקו את הברקוד" vanished from the dealer strip); the per-line advance squeeze
+  // guarantees each stored line fits the box width.
+  if (text.includes('\n')) {
+    return { lines: text.split('\n'), drawSize: fontSize };
+  }
   let lines = wrapText(text, width, fontSize, measure);
   if (lines.length > maxLines) lines = lines.slice(0, maxLines);
   return { lines, drawSize: fontSize };
@@ -175,6 +182,11 @@ function drawTextBlock(page: PDFPage, pageH: number, tb: TextBlockIR, font: Awai
   const measure = (t: string, s: number) => font.widthOfTextAtSize(t, s);
   const { lines, drawSize } = planTextLines(tb.text, tb.width, tb.height, size, tb.lineHeight || 1.2, measure);
   const drawGap = drawSize * (tb.lineHeight || 1.2);
+  // F2 baseline parity: an IMPORTED block's top is the source glyph top minus the source ascent
+  // (≈ fontSize), so the source baseline sits ≈1.0×size below our top; drawing at 0.85 floated
+  // every unedited run ~0.15em above the original (edge chars leaked into neighbouring regions).
+  // Generated/user content keeps the editor-calibrated 0.85.
+  const baselineK = tb.source === 'original' ? 1.0 : 0.85;
   // clip every text block to its box so nothing ever bleeds onto a neighbour (WYSIWYG safety net)
   const clipBottom = pageH - tb.y - tb.height;
   page.pushOperators(pushGraphicsState(), rectangle(tb.x - 0.5, clipBottom - 0.5, tb.width + 1, tb.height + 1), clip(), endPath());
@@ -186,7 +198,7 @@ function drawTextBlock(page: PDFPage, pageH: number, tb: TextBlockIR, font: Awai
     let x = tb.x;
     if (tb.direction === 'rtl' || tb.align === 'end') x = tb.x + tb.width - tw;
     else if (tb.align === 'center') x = tb.x + (tb.width - tw) / 2;
-    const y = pageH - tb.y - drawSize * 0.85 - li * drawGap;
+    const y = pageH - tb.y - drawSize * baselineK - li * drawGap;
     // T5 (gated): outline mode draws the line as vector glyph PATHS — viewer-independent print
     // masters (no selectable text). Default remains glyph-by-glyph text draws.
     if (outlineFont) {
@@ -196,17 +208,33 @@ function drawTextBlock(page: PDFPage, pageH: number, tb: TextBlockIR, font: Awai
     // Draw glyph-by-glyph at explicit x: we already reordered to VISUAL order, and
     // positioning each glyph absolutely prevents the PDF VIEWER from re-applying bidi
     // (which would otherwise reverse numbers / flip a line that starts with Hebrew).
+    // F2: when the embedded font runs slightly WIDER than the source font, squeeze the
+    // inter-glyph advances so the line always stays inside its box (a cut final digit —
+    // "1,151"→"1,15" — is a round-trip fidelity failure).
+    const squeeze = tw > tb.width + 0.3 && tw > 0 ? (tb.width + 0.3) / tw : 1;
+    if (squeeze < 1 && (tb.direction === 'rtl' || tb.align === 'end')) x = tb.x + tb.width - tw * squeeze;
     let cx = x;
     for (const ch0 of visual) {
-      const ch = ch0 === '׳' ? "'" : ch0 === '״' ? '"' : ch0;
-      const w = font.widthOfTextAtSize(ch, drawSize);
+      const { ch, w } = encodableGlyph(font, ch0, drawSize);
       if (ch !== ' ') {
         try { page.drawText(ch, { x: cx, y, size: drawSize, font, color }); } catch { /* skip unencodable */ }
       }
-      cx += w;
+      cx += w * squeeze;
     }
   }
   page.pushOperators(popGraphicsState());
+}
+
+/** F2: prefer the ORIGINAL character (geresh ׳, gershayim ״, …); substitute only when the
+ * embedded font cannot encode it — a hard substitution broke source-identity round-trips. */
+const GLYPH_FALLBACK: Record<string, string> = { '׳': "'", '״': '"', '–': '-', '—': '-' };
+function encodableGlyph(font: EmbeddedFont, ch0: string, size: number): { ch: string; w: number } {
+  try { return { ch: ch0, w: font.widthOfTextAtSize(ch0, size) }; }
+  catch {
+    const alt = GLYPH_FALLBACK[ch0] ?? ch0;
+    try { return { ch: alt, w: font.widthOfTextAtSize(alt, size) }; }
+    catch { return { ch: ' ', w: size * 0.25 }; }
+  }
 }
 
 type EmbeddedFont = Awaited<ReturnType<PDFDocument['embedFont']>>;
@@ -215,8 +243,7 @@ type EmbeddedFont = Awaited<ReturnType<PDFDocument['embedFont']>>;
 function drawVisualLine(page: PDFPage, xStart: number, y: number, visual: string, size: number, font: EmbeddedFont, color: RGB): void {
   let cx = xStart;
   for (const ch0 of visual) {
-    const ch = ch0 === '׳' ? "'" : ch0 === '״' ? '"' : ch0;
-    const w = font.widthOfTextAtSize(ch, size);
+    const { ch, w } = encodableGlyph(font, ch0, size);
     if (ch !== ' ') { try { page.drawText(ch, { x: cx, y, size, font, color }); } catch { /* skip */ } }
     cx += w;
   }

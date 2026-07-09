@@ -106,34 +106,78 @@ export function reconstructLines<T extends ReconUnit>(units: T[], opts: ReconOpt
   const xTolOf = (u: ReconUnit) => opts.xToleranceRatio != null ? opts.xToleranceRatio * u.size : (opts.xTolerance ?? X_TOLERANCE);
   const colGapOf = (u: ReconUnit) => (opts.columnGapRatio ?? 2.5) * Math.max(4, u.size);
 
-  // step 3 — cluster into physical lines by top (tolerance is evaluated per unit pair)
-  const sorted = [...usable].sort((a, b) => a.top - b.top);
+  // step 3 — cluster into physical lines by top (tolerance is evaluated per unit pair).
+  // A size guard keeps DIFFERENT TYPE LEVELS apart even when their tops align — a 40pt rating
+  // digit must not merge into the 23pt scale row beside it (that produced overlapping blocks).
+  const sorted = [...usable].sort((a, b) => a.top - b.top || a.size - b.size);
   const lineClusters: T[][] = [[sorted[0]]];
   for (let i = 1; i < sorted.length; i++) {
-    const prev = sorted[i - 1];
-    if (sorted[i].top > prev.top + Math.min(yTolOf(prev), yTolOf(sorted[i]))) lineClusters.push([sorted[i]]);
-    else lineClusters[lineClusters.length - 1].push(sorted[i]);
+    const prev = sorted[i - 1], curr = sorted[i];
+    const sizeBreak = Math.max(prev.size, curr.size) / Math.max(1, Math.min(prev.size, curr.size)) > 1.5;
+    if (curr.top > prev.top + Math.min(yTolOf(prev), yTolOf(curr)) || sizeBreak) lineClusters.push([curr]);
+    else lineClusters[lineClusters.length - 1].push(curr);
   }
 
   const lines: ReconLine<T>[] = [];
   for (const cluster of lineClusters) {
-    // step 4 — logical order within the line
-    const rtl = isRtlText(cluster.map((u) => u.text).join(' '));
-    const ordered = sortLineLogical(cluster, rtl);
+    // geometric order for SPLITTING (direction of the whole band is only a split heuristic)
+    const bandRtl = isRtlText(cluster.map((u) => u.text).join(' '));
+    const ordered = sortLineLogical(cluster, bandRtl);
     // column split (step 6 prelude): an internal gap > 2.5×size separates column segments
     const fragments: T[][] = [[ordered[0]]];
     for (let i = 1; i < ordered.length; i++) {
       const prev = ordered[i - 1], curr = ordered[i];
-      const gap = rtl ? prev.x0 - curr.x1 : curr.x0 - prev.x1;
+      const gap = bandRtl ? prev.x0 - curr.x1 : curr.x0 - prev.x1;
       if (gap > colGapOf(prev)) fragments.push([curr]);
       else fragments[fragments.length - 1].push(curr);
     }
-    for (const frag of fragments) {
+    for (const frag0 of fragments) {
+      // F2: direction is decided PER FRAGMENT — a digits-only value cell sharing a y-band with a
+      // Hebrew label is LTR content; joining it right-to-left reversed phone/spec digits.
+      const rtl = isRtlText(frag0.map((u) => u.text).join(' '));
+      const isLtrUnit = (u: T) => !/[֐-׿]/.test(u.text);
+      let frag = sortLineLogical(frag0, rtl);
+      if (rtl) {
+        // F2: inside an RTL fragment, a maximal run of LTR-ish units (digits/Latin — no Hebrew)
+        // reads left→right; the fragment-level desc-x join must not reverse it ("03-6710333"
+        // became "3330176-30" in the letter-spaced dealer strip).
+        const fixed: T[] = [];
+        let i = 0;
+        while (i < frag.length) {
+          if (!isLtrUnit(frag[i])) { fixed.push(frag[i]); i++; continue; }
+          let j = i;
+          while (j < frag.length && isLtrUnit(frag[j])) j++;
+          fixed.push(...frag.slice(i, j).reverse()); // desc-x → asc-x = logical LTR order
+          i = j;
+        }
+        frag = fixed;
+      }
       // step 5 — words: join with a space at each new segment (beginsNewSegment); adjacent
       // continuations (kerning splits) join WITHOUT a space.
+      // F3 — statistical gap classification. A LETTER-SPACED line (dealer strips, legal small
+      // print) arrives as per-character runs whose kerning gaps exceed any fixed tolerance and
+      // used to become one space per character. When most units are single glyphs, classify gaps
+      // per line: unimodal letter-gaps sit around the median; a WORD boundary is a clear outlier
+      // (> k×median, floored by the font's ~space advance). Normal run-per-word lines keep the
+      // fixed x-tolerance-ratio rule.
+      const pairGap = (a: T, b: T, pairRtl: boolean) => (pairRtl ? a.x0 - b.x1 : b.x0 - a.x1);
+      const pairRtlOf = (a: T, b: T) => rtl && !(isLtrUnit(a) && isLtrUnit(b));
+      const singleGlyphs = frag.filter((u) => [...u.text.trim()].length === 1).length;
+      const letterSpaced = frag.length >= 8 && singleGlyphs >= frag.length * 0.6;
+      let letterThreshold = Infinity;
+      if (letterSpaced) {
+        const gaps = frag.slice(1).map((u, i) => pairGap(frag[i], u, pairRtlOf(frag[i], u))).filter((g) => g >= 0).sort((a, b) => a - b);
+        const med = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+        const spaceAdvance = 0.28 * frag[0].size; // ≈ the font's space advance
+        letterThreshold = Math.max(2.2 * med, spaceAdvance * 0.9);
+      }
       let text = frag[0].text;
       for (let i = 1; i < frag.length; i++) {
-        const sep = beginsNewSegment(frag[i - 1], frag[i], rtl, xTolOf(frag[i - 1]), yTolOf(frag[i - 1])) ? ' ' : '';
+        // gap math follows the PAIR's direction: an embedded LTR run inside an RTL fragment is
+        // ordered asc-x, so its pairs must be measured LTR (else "jumped backwards" forces spaces)
+        const pairRtl = pairRtlOf(frag[i - 1], frag[i]);
+        const xTol = letterSpaced ? letterThreshold : xTolOf(frag[i - 1]);
+        const sep = beginsNewSegment(frag[i - 1], frag[i], pairRtl, xTol, yTolOf(frag[i - 1])) ? ' ' : '';
         text += sep + frag[i].text;
       }
       lines.push({

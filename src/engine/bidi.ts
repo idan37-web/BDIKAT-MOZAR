@@ -38,13 +38,62 @@ function forceLtrBracketsLevel(input: string, levels: Uint8Array): void {
 }
 
 /**
+ * F2 extraction repair: some source streams (and pdf.js chunks it did not reverse) hand us
+ * bracket pairs with REVERSED facing — ")מושבים(" — i.e. a closer that opens. In LOGICAL text a
+ * pair must open before it closes; detect close-before-open pairs in RTL-dominant text and swap
+ * both codepoints. Correct pairs ("(GT)", "(ק״ג)") are left untouched. Extraction-only — the
+ * export mirroring then reproduces the source's visual facing exactly.
+ */
+export function repairReversedBrackets(logical: string): string {
+  if (!HEB.test(logical)) return logical;
+  const chars = [...logical];
+  const MIR: Record<string, string> = { ')': '(', '(': ')', ']': '[', '[': ']', '}': '{', '{': '}' };
+  const OPENERS = new Set(['(', '[', '{']);
+  const CLOSERS: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
+  const stack: string[] = [];
+  const danglingClosers: number[] = [];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (OPENERS.has(ch)) stack.push(ch);
+    else if (CLOSERS[ch]) {
+      if (stack.length && stack[stack.length - 1] === CLOSERS[ch]) stack.pop();
+      else danglingClosers.push(i); // a closer with no open pair yet — candidate for repair
+    }
+  }
+  if (!danglingClosers.length) return logical;
+  // pair each dangling closer with the NEXT dangling opener of the same kind and swap facing
+  for (const ci of danglingClosers) {
+    const want = CLOSERS[chars[ci]];
+    for (let j = ci + 1; j < chars.length; j++) {
+      if (chars[j] === want) { chars[ci] = MIR[chars[ci]]; chars[j] = MIR[chars[j]]; break; }
+    }
+  }
+  return chars.join('');
+}
+
+/**
  * Logical → visual order for ONE wrapped line (left-to-right glyph drawing, e.g. pdf-lib).
  * Digits and Latin runs inside Hebrew keep their natural order (bidi levels), and mirrored
  * characters (brackets/quotes) are swapped where the algorithm requires.
  */
 export function toVisualLine(logical: string, baseDir: 'rtl' | 'ltr' = 'rtl'): string {
-  const levels = bidi.getEmbeddingLevels(logical, baseDir);
-  forceLtrBracketsLevel(logical, levels.levels);
+  // Digit-list bridge: a space between two digits (a scale "1 2 3 4", a spaced range) reads
+  // left-to-right as ONE number sequence in this domain. Plain space is bidi-neutral (N1 would
+  // hand it the RTL paragraph level and REVERSE the list); NBSP is CS, which bridges EN runs
+  // (UAX W4) — swap for reordering, restore after.
+  // bridge spaces INSIDE a numeric token (digits/dashes/dots — covers letter-spaced phone
+  // numbers "0 3 - 6 7 1 0 3 3 3" as well as plain "1 2 3 4" scales)
+  // ONLY wrap a token that CONTAINS A SPACE: a contiguous number ("2017/1151") needs no isolate,
+  // and wrapping it severs it from a preceding Latin run ("EU 2017/1151") that UBA rule W7 folds
+  // into ONE LTR run — the isolate flips "EU 2017/1151" to "2017/1151 EU".
+  const bridged = logical.replace(/\d[\d,\-\u2013\u2014.:/ ]*\d/g, (tok) =>
+    tok.includes(' ') ? '\u2066' + tok.replace(/ /g, '\u00A0') + '\u2069' : tok);
+  const levels = bidi.getEmbeddingLevels(bridged, baseDir);
+  forceLtrBracketsLevel(bridged, levels.levels);
+  return reorderWithLevels(bridged, levels).replace(/[\u2066\u2069]/g, '').replace(/\u00A0/g, ' ');
+}
+
+function reorderWithLevels(logical: string, levels: ReturnType<typeof bidi.getEmbeddingLevels>): string {
 
   // UTF-16 code units (bidi-js indexes by code unit; our text is BMP-only).
   const chars = logical.split('');

@@ -4,6 +4,7 @@
 // top-left point coordinates. No bidi reordering here: the IR stores logical text.
 import type { TextBlockIR } from '../types/catalog';
 import { reconstruct, type ReconUnit } from '../engine/textRecon';
+import { repairReversedBrackets } from '../engine/bidi';
 
 interface PdfTextItem {
   str: string;
@@ -19,6 +20,26 @@ function dirOf(item: PdfTextItem): TextBlockIR['direction'] {
   if (item.dir === 'rtl') return 'rtl';
   if (item.dir === 'ltr') return 'ltr';
   return 'mixed';
+}
+
+/**
+ * F3 (letter-spaced small print): pdf.js bakes a run's letter-spacing into its `str` as one
+ * space per glyph — a dealer strip phone arrives as "0 3 - 6 7 1 0 3 5 4", an address as
+ * "ש ו ר ק ר א ש ל ״ צ :". Those spaces are typographic, not word breaks, so they must be
+ * removed or the word/phone splits into a character soup. Detection is statistical, not a
+ * fixed threshold: a run is letter-spaced when most of its space-separated tokens are single
+ * characters. Normal multi-word runs ("רכב קומפקטי שמביא", "דרגת זיהום אוויר") keep every
+ * space. Scale widgets whose glyphs are SEPARATE pdf.js items ("1" "2" "3") are handled later,
+ * between units, by the reconstruction engine's gap classifier — this only touches intra-run
+ * spacing that is already collapsed into a single string here.
+ */
+export function collapseLetterSpacing(str: string): string {
+  if (!str.includes(' ')) return str;
+  const tokens = str.split(/ +/).filter(Boolean);
+  if (tokens.length < 4) return str; // too short to classify reliably
+  const singles = tokens.filter((t) => [...t].length === 1).length;
+  if (singles < tokens.length * 0.6) return str; // real words, not letter-spacing
+  return tokens.join('');
 }
 
 /**
@@ -38,7 +59,7 @@ export function extractTextBlocks(
   let z = 1;
   for (let i = 0; i < textContent.items.length; i++) {
     const it = textContent.items[i];
-    const str = it.str;
+    const str = collapseLetterSpacing(it.str);
     if (!str || !str.trim()) continue;
 
     const t = it.transform;
@@ -128,8 +149,14 @@ export function clusterTextBlocks(allBlocks: TextBlockIR[]): TextBlockIR[] {
   for (const rb of reconBlocks) {
     const members = rb.lines.flatMap((l) => l.units.map((u) => u.block));
     if (members.length === 1 && rb.lines.length === 1) {
-      // untouched single run — keep the original block verbatim
-      out.push(members[0]);
+      // untouched single run — keep the original block, repairing reversed bracket pairs (F2)
+      const only = members[0];
+      const repaired = repairReversedBrackets(only.text);
+      // F2: a dial-star number ("*4989") reads LEFT→RIGHT in the source (the star stays on the
+      // LEFT, like a shortcode); pdf.js already flags the digits run 'ltr', which renders it
+      // star-left — so keep that direction (an earlier 'rtl' override wrongly flipped it to
+      // "4989*", contradicting the source's own visual order).
+      out.push(repaired === only.text ? only : { ...only, text: repaired, originalText: repaired });
       continue;
     }
     const longest = members.reduce((m, b) => (b.text.length > m.text.length ? b : m), members[0]);
@@ -138,7 +165,7 @@ export function clusterTextBlocks(allBlocks: TextBlockIR[]): TextBlockIR[] {
       ...longest,
       x: rb.x0, y: rb.top, width: rb.x1 - rb.x0, height: rb.bottom - rb.top,
       originalBBox: { x: rb.x0, y: rb.top, width: rb.x1 - rb.x0, height: rb.bottom - rb.top },
-      text: rb.text, originalText: rb.text,
+      text: repairReversedBrackets(rb.text), originalText: repairReversedBrackets(rb.text),
       fontSize: rb.size,
       lineHeight: rb.lineHeightRatio ?? longest.lineHeight ?? 1.2,
       direction: rtl ? 'rtl' : 'ltr',
