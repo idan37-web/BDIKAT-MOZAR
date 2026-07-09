@@ -16,6 +16,25 @@ export interface DetectedTable {
   numeric: boolean; // values are mostly numbers/checkmarks (spec) vs feature text (equipment)
   color: string;
   fontFamily: string;
+  /** F4: 0..1 grid regularity. Below CONFIDENCE_MIN the caller degrades the region to clean text
+   * blocks instead of emitting a broken table. */
+  confidence: number;
+  /** F4: ids of the cells actually placed in the KEPT rows — the caller marks only these consumed,
+   * so trimmed strays (footnotes, prose paragraphs) survive as free text. */
+  consumedIds: string[];
+}
+
+/** F4: minimum grid regularity to emit a table; a lower score degrades to clean text. */
+export const CONFIDENCE_MIN = 0.5;
+
+/** A label-only row that is NOT a real section header — a footnote ("*…"), a prose paragraph, or a
+ * trailing category with no data beneath it. Such rows are stripped from the grid and returned to
+ * free text (the "broken table swallowed the footnotes" symptom). */
+function isStraySection(text: string, followedByData: boolean): boolean {
+  const t = text.trim();
+  if (/^\*/.test(t)) return true;                       // footnote marker
+  if (t.split(/\s+/).length >= 6) return true;          // a sentence/paragraph, not a category label
+  return !followedByData;                               // trailing header with nothing under it
 }
 
 const HEB_WORD = /[֐-׿]{2,}/;
@@ -84,8 +103,8 @@ function buildTable(tableCols: Col[]): DetectedTable | null {
     if (band) band.push(c); else bands.push([c]);
   }
   const cols = tableCols; // logical order (label first)
-  const rows: TableRowIR[] = [];
-  let numericVals = 0, totalVals = 0;
+  // build rows AND keep each row's source cells, so a trimmed stray returns to free text
+  const raw: { row: TableRowIR; cells: TextBlockIR[] }[] = [];
   for (const band of bands) {
     const cells: string[] = new Array(cols.length).fill('');
     for (const cell of band) {
@@ -102,13 +121,33 @@ function buildTable(tableCols: Col[]): DetectedTable | null {
     const labelCell = cells[0];
     const valueCells = cells.slice(1);
     const hasValues = valueCells.some((v) => v);
-    if (labelCell && !hasValues && cols.length > 1) rows.push({ kind: 'section', cells: [labelCell] });
-    else if (!labelCell && hasValues) rows.push({ kind: 'header', cells });
-    else rows.push({ kind: 'data', cells });
-    // numeric = value cells that carry actual NUMBERS (a checkmark-only grid is an equipment
-    // list, not the technical spec — user-reported misclassification)
-    for (const v of valueCells) if (v) { totalVals++; if (/\d/.test(v) && isNumericCell(v)) numericVals++; }
+    let row: TableRowIR;
+    if (labelCell && !hasValues && cols.length > 1) row = { kind: 'section', cells: [labelCell] };
+    else if (!labelCell && hasValues) row = { kind: 'header', cells };
+    else row = { kind: 'data', cells };
+    raw.push({ row, cells: band });
   }
+
+  // F4: strip stray label-only rows (footnotes / prose / trailing categories) — they are NOT grid
+  // data; keep them out of the table so they degrade to free text. A section is real only when a
+  // data row appears somewhere below it.
+  const kept = raw.filter((e, i) => {
+    if (e.row.kind !== 'section') return true;
+    const followedByData = raw.slice(i + 1).some((n) => n.row.kind === 'data');
+    return !isStraySection(e.row.cells[0] || '', followedByData);
+  });
+  if (!kept.length) return null;
+
+  const rows = kept.map((e) => e.row);
+  let numericVals = 0, totalVals = 0, coherent = 0;
+  for (const { row } of kept) {
+    if (row.kind === 'data') {
+      const vals = row.cells.slice(1).filter((v) => v);
+      if (row.cells[0] && vals.length) coherent++;
+      for (const v of vals) { totalVals++; if (/\d/.test(v) && isNumericCell(v)) numericVals++; }
+    } else coherent++; // section (now guaranteed to head data) / header
+  }
+  const confidence = coherent / rows.length;
 
   const totalW = x1 - x0 || 1;
   const colFractions = cols.map((c) => Math.max(0.08, (c.x1 - c.x0) / totalW));
@@ -125,6 +164,8 @@ function buildTable(tableCols: Col[]): DetectedTable | null {
     numeric: numericVals >= Math.max(3, totalVals * 0.3),
     color: mode(all.map((c) => c.color)),
     fontFamily: mode(all.map((c) => c.fontFamily)),
+    confidence,
+    consumedIds: kept.flatMap((e) => e.cells.map((c) => c.id)),
   };
 }
 
@@ -157,13 +198,9 @@ export function detectTables(cells: TextBlockIR[], pageWidth: number, edges?: Ed
   if (edges && edges.length >= 4) {
     for (const gt of detectGridTables(edges)) {
       const t = gridToDetected(gt, flat);
-      if (t) {
+      if (t && t.confidence >= CONFIDENCE_MIN) {
         tables.push(t);
-        const inside = flat.filter((c) => {
-          const cx = c.x + c.width / 2, cy = c.y + c.height / 2;
-          return cx >= gt.x0 && cx <= gt.x1 && cy >= gt.top && cy <= gt.bottom;
-        });
-        for (const c of inside) used.add(c.id);
+        for (const id of t.consumedIds) used.add(id);
       }
     }
     flat = flat.filter((c) => !used.has(c.id));
@@ -184,9 +221,11 @@ export function detectTables(cells: TextBlockIR[], pageWidth: number, edges?: Ed
     // column of rowspan CATEGORY labels ("מנוע בנזין" beside a spec grid) is not its own table;
     // its cells stay free text at their original positions.
     const denseRows = t.rowHeight <= Math.max(10, t.fontSize * 3);
-    if (t.rows.length >= 3 && (t.columns >= 2 || (t.rows.length >= 6 && denseRows))) {
+    // F4: emit only a table whose grid is regular enough (confidence ≥ threshold); a low score means
+    // the cells don't form a real grid → leave them as free text rather than an inconsistent table.
+    if (t.rows.length >= 3 && t.confidence >= CONFIDENCE_MIN && (t.columns >= 2 || (t.rows.length >= 6 && denseRows))) {
       tables.push(t);
-      for (const col of g) for (const c of col.cells) used.add(c.id);
+      for (const id of t.consumedIds) used.add(id); // only cells in KEPT rows (trimmed strays stay text)
     }
   }
   return { tables, used };
@@ -210,18 +249,31 @@ function gridToDetected(gt: GridTable, cells: TextBlockIR[]): DetectedTable | nu
   const fsz = inside.map((c) => c.fontSize).sort((a, b) => a - b);
   const fontSize = fsz[Math.floor(fsz.length / 2)] || 10;
   // logical order = grid columns REVERSED (label on the right)
-  const rows: TableRowIR[] = grid.map((gr) => {
+  const allRows: TableRowIR[] = grid.map((gr) => {
     const logical = [...gr].reverse();
     const label = logical[0], values = logical.slice(1);
     if (label && !values.some((v) => v)) return { kind: 'section', cells: [label] } as TableRowIR;
     if (!label && values.some((v) => v)) return { kind: 'header', cells: logical } as TableRowIR;
     return { kind: 'data', cells: logical } as TableRowIR;
   });
+  // F4: same stray-section trim as the borderless path (footnote/prose/trailing header → not a row)
+  const rows = allRows.filter((r, i) => {
+    if (r.kind !== 'section') return true;
+    const followedByData = allRows.slice(i + 1).some((n) => n.kind === 'data');
+    return !isStraySection(r.cells[0] || '', followedByData);
+  });
+  if (rows.length < 3) return null;
   const totalW = gt.x1 - gt.x0 || 1;
   const widths: number[] = [];
   for (let i = nCols - 1; i >= 0; i--) widths.push((gt.cols[i + 1] - gt.cols[i]) / totalW);
-  let vals = 0, digits = 0;
-  for (const r of rows) for (const c of r.cells.slice(1)) if (c.trim()) { vals++; if (/\d/.test(c) && c.replace(/[\d.,/%+\-\s()x×]/gi, '').length <= 2) digits++; }
+  let vals = 0, digits = 0, coherent = 0;
+  for (const r of rows) {
+    if (r.kind === 'data') {
+      const rv = r.cells.slice(1).filter((c) => c.trim());
+      if (r.cells[0]?.trim() && rv.length) coherent++;
+      for (const c of rv) { vals++; if (/\d/.test(c) && c.replace(/[\d.,/%+\-\s()x×]/gi, '').length <= 2) digits++; }
+    } else coherent++;
+  }
   return {
     bbox: { x: gt.x0, y: gt.top, width: gt.x1 - gt.x0, height: gt.bottom - gt.top },
     columns: nCols, colFractions: widths, rows,
@@ -229,6 +281,8 @@ function gridToDetected(gt: GridTable, cells: TextBlockIR[]): DetectedTable | nu
     numeric: digits >= Math.max(3, vals * 0.3),
     color: mode(inside.map((c) => c.color)),
     fontFamily: mode(inside.map((c) => c.fontFamily)),
+    confidence: coherent / rows.length,
+    consumedIds: inside.map((c) => c.id),
   };
 }
 

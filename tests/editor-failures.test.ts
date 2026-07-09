@@ -84,3 +84,50 @@ describe('F1 — clipped text in blocks (edit mode must auto-grow + indicate ove
     expect(host.querySelector('[data-overflow="true"]')).toBeNull();
   });
 });
+
+describe('F4 — table detection: a faithful grid or clean text, never a broken table', () => {
+  async function importFixture(name: string) {
+    const { readFileSync } = await import('node:fs');
+    const { importPdf } = await import('../src/pdf/importPdf');
+    const b = readFileSync(`tests/fixtures/${name}`);
+    return importPdf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), name, { renderPreviews: false, reconstructTables: true });
+  }
+  type TableBlockIR = import('../src/types/catalog').TableBlockIR;
+
+  it('the C3 spec page is a faithful grid — real spec pairs align, footnotes/title are NOT swallowed as rows', async () => {
+    const doc = await importFixture('c3-spec-page.pdf');
+    const page = doc.pages[0];
+    const tables = page.blocks.filter((b) => b.type === 'table') as TableBlockIR[];
+    expect(tables.length, 'the spec page must reconstruct at least one table').toBeGreaterThan(0);
+
+    const rowCells = tables.flatMap((t) => t.rows.flatMap((r) => r.cells)).map((c) => c.trim());
+    // a footnote ("*המוקדם מביניהם.", "**נתוני צריכת הדלק…") is NOT table data — swallowing it as a
+    // section row is the "broken table" symptom. It must degrade to a free-text block instead.
+    expect(rowCells.filter((c) => /^\*/.test(c)), 'footnote lines must not become table rows').toEqual([]);
+    // the page TITLE ("מפרט טכני …") is a heading, never a table cell
+    expect(rowCells.some((c) => c.includes('מפרט טכני')), 'the page title must not be a table row').toBe(false);
+
+    // faithfulness: known label→value pairs line up in the grid (label in col 0, value in col 1)
+    const pairValue = (labelPart: string): string | undefined => {
+      for (const t of tables) for (const r of t.rows) {
+        if (r.kind === 'data' && r.cells[0]?.includes(labelPart)) return r.cells[1]?.trim();
+      }
+      return undefined;
+    };
+    expect(pairValue('גובה'), 'height row value').toBe('159');
+    expect(pairValue('מכל דלק'), 'fuel-tank row value').toBe('44');
+    expect(pairValue('מהירות מרבית'), 'top-speed row value').toBe('160');
+
+    // the swallowed footnote text must survive as a free-text block on the page
+    const texts = page.blocks.filter((b) => b.type === 'text') as { text: string }[];
+    expect(texts.some((t) => t.text.includes('המוקדם מביניהם')), 'footnote must remain as free text').toBe(true);
+  }, 240_000);
+
+  it('the multi-column trim comparison page keeps its grid (no regression)', async () => {
+    const doc = await importFixture('peugeot-3008.pdf');
+    const tables = doc.pages.flatMap((p) => p.blocks).filter((b) => b.type === 'table') as TableBlockIR[];
+    // the trim-comparison page is a wide checkmark grid — the fix must NOT collapse it to text
+    expect(tables.some((t) => t.columns >= 4 && t.rows.length >= 10),
+      'a 4+ column trim comparison table must still be detected').toBe(true);
+  }, 240_000);
+});
