@@ -15,7 +15,7 @@ import { drawLineOutlines, openFont } from '../engine/glyphExport';
 
 type OutlineFont = ReturnType<typeof openFont>;
 import type { DocumentIR, TextBlockIR, ImageBlockIR, ShapeBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
-import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction } from '../types/catalog';
+import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction, resolveVAlign, cellBaselineOffset } from '../types/catalog';
 
 function hexToRgb(hex: string): RGB {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
@@ -256,13 +256,13 @@ function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: Em
   const grid = hexToRgb(tb.gridColor || '#d7dade');
   const pad = 3;
   if (tb.cellBg) page.drawRectangle({ x: tb.x, y: pageH - tb.y - tb.height, width: tb.width, height: tb.height, color: hexToRgb(tb.cellBg) });
-  const cellText = (text: string, cellX: number, cellW: number, rowTop: number, align: 'end' | 'center', size: number, col: RGB, bold?: boolean) => {
+  const cellText = (text: string, cellX: number, cellW: number, rowTop: number, align: 'end' | 'center', size: number, col: RGB, voff: number, bold?: boolean) => {
     if (!text) return;
     const f = bold ? fontBold : font;
     const visual = logicalToVisual(text, 'rtl');
     const tw = f.widthOfTextAtSize(visual, size);
     const xStart = align === 'center' ? cellX + (cellW - tw) / 2 : cellX + cellW - pad - tw;
-    const y = pageH - rowTop - tb.rowHeight / 2 - size * 0.34;
+    const y = pageH - rowTop - voff; // F5: baseline from row top per resolved vertical alignment
     drawVisualLine(page, xStart, y, visual, size, f, col);
   };
 
@@ -270,9 +270,10 @@ function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: Em
     const row = tb.rows[r];
     const rowTop = tb.y + r * tb.rowHeight;
     const size = tb.fontSize;
+    const voff = cellBaselineOffset(resolveVAlign(tb, row), tb.rowHeight, size);
     if (row.kind === 'section') {
       if (tb.sectionBg) page.drawRectangle({ x: tb.x, y: pageH - rowTop - tb.rowHeight, width: tb.width, height: tb.rowHeight, color: hexToRgb(tb.sectionBg) });
-      cellText(row.cells[0] || '', tb.x, tb.width, rowTop, 'end', size, heading, true);
+      cellText(row.cells[0] || '', tb.x, tb.width, rowTop, 'end', size, heading, voff, true);
     } else {
       for (let i = 0; i < tb.columns; i++) {
         const leftFrac = columnLeftFraction(tb.colFractions, i);
@@ -281,7 +282,7 @@ function drawTableBlock(page: PDFPage, pageH: number, tb: TableBlockIR, font: Em
         const text = row.cells[i] ?? '';
         const isLabel = i === 0;
         const head = row.kind === 'header';
-        cellText(text, cellX, cellW, rowTop, isLabel ? 'end' : 'center', size, head ? heading : color, head);
+        cellText(text, cellX, cellW, rowTop, isLabel ? 'end' : 'center', size, head ? heading : color, voff, head);
       }
     }
     // horizontal rule under the row

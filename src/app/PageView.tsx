@@ -2,7 +2,7 @@
 //  - original/compare show the reference raster; editable/reconstructed render from IR.
 import { useRef, useState } from 'react';
 import type { PageIR, TextBlockIR, ImageBlockIR, TableBlockIR, BlockIR } from '../types/catalog';
-import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction } from '../types/catalog';
+import { isTextBlock, isImageBlock, isShapeBlock, isTableBlock, columnLeftFraction, resolveVAlign, vAlignToFlex } from '../types/catalog';
 import { TextEditOverlay } from '../editor/TextEditOverlay';
 import { pctRect, pct, scaledPx, scaledHairline } from '../editor/layerMath';
 import { wrapText } from '../catalog/autofit';
@@ -238,7 +238,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
                 return (
                   <div key={r} dir="rtl" onDoubleClick={interactive ? (e) => { e.stopPropagation(); onStartEditCell?.({ tableId: b.id, r, c: 0 }); } : undefined}
                     style={{ position: 'absolute', left: 0, top: rowTop(r), width: '100%', height: rowH,
-                      display: 'flex', alignItems: 'center', justifyContent: 'flex-start', padding: `0 ${scaledPx(3)}`,
+                      display: 'flex', alignItems: vAlignToFlex(resolveVAlign(b, row)), justifyContent: 'flex-start', padding: `0 ${scaledPx(3)}`,
                       fontFamily: fontFamily || b.fontFamily, fontSize: scaledPx(b.fontSize), fontWeight: 700,
                       background: b.sectionBg || 'transparent',
                       color: compare ? 'rgba(20,40,120,.55)' : (b.headingColor || b.color), borderBottom: `${scaledHairline(0.6)} solid ${b.gridColor || '#d7dade'}`, overflow: 'hidden' }}>
@@ -259,7 +259,7 @@ export function PageView({ page, scale, mode, fontFamily, selectedId, selectedId
                 return (
                   <div key={c} dir="rtl" onDoubleClick={interactive ? (e) => { e.stopPropagation(); onStartEditCell?.({ tableId: b.id, r, c }); } : undefined}
                     style={{ position: 'absolute', left: `${(leftFrac * 100).toFixed(4)}%`, top: rowTop(r), width: `${((b.colFractions[c] || 0) * 100).toFixed(4)}%`, height: rowH,
-                      display: 'flex', alignItems: 'center', justifyContent: isLabel ? 'flex-start' : 'center', padding: `0 ${scaledPx(3)}`,
+                      display: 'flex', alignItems: vAlignToFlex(resolveVAlign(b, row)), justifyContent: isLabel ? 'flex-start' : 'center', padding: `0 ${scaledPx(3)}`,
                       fontFamily: fontFamily || b.fontFamily, fontSize: scaledPx(b.fontSize), fontWeight: row.kind === 'header' ? 700 : 400,
                       color: compare ? 'rgba(20,40,120,.55)' : (row.kind === 'header' ? (b.headingColor || b.color) : b.color),
                       borderBottom: `${scaledHairline(0.4, 0.4)} solid ${b.gridColor || '#d7dade'}`,

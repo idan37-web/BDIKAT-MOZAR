@@ -106,11 +106,16 @@ export interface ShapeBlockIR extends BlockIR {
   opacity?: number;
 }
 
+/** Vertical placement of cell text within its row box (F5). */
+export type CellVAlign = 'top' | 'middle' | 'bottom';
+
 /** One row of a TableBlockIR. `data`/`header` rows carry one cell per column (logical order:
  * index 0 = label column); a `section` row is a single full-width title that spans all columns. */
 export interface TableRowIR {
   kind: 'header' | 'section' | 'data';
   cells: string[];
+  /** F5: per-row vertical alignment override (wins over the table default). */
+  vAlign?: CellVAlign;
 }
 
 /** A first-class, editable spec table (Milestone D). Columns are in LOGICAL order
@@ -134,6 +139,8 @@ export interface TableBlockIR extends BlockIR {
   cellBg?: string;
   /** optional fill behind SECTION-header rows (a captured highlight band, e.g. "#fff200"). */
   sectionBg?: string;
+  /** F5: default vertical alignment of cell text for the whole table (per-row `vAlign` overrides). */
+  vAlign?: CellVAlign;
   direction: TextDirection;
   embeddedFontRef?: EmbeddedFontRef;
 }
@@ -169,4 +176,25 @@ export function columnLeftFraction(colFractions: number[], i: number): number {
   let f = 1;
   for (let k = 0; k <= i; k++) f -= colFractions[k] || 0;
   return Math.max(0, f);
+}
+
+/** F5: resolve the effective vertical alignment of a row's cells — per-row override, else the
+ * table default, else middle. Shared by editor render + PDF export so they never diverge. */
+export function resolveVAlign(table: { vAlign?: CellVAlign }, row: { vAlign?: CellVAlign }): CellVAlign {
+  return row.vAlign ?? table.vAlign ?? 'middle';
+}
+
+/** F5: CSS flexbox cross-axis value for a vertical alignment (editor render). */
+export function vAlignToFlex(v: CellVAlign): 'flex-start' | 'center' | 'flex-end' {
+  return v === 'top' ? 'flex-start' : v === 'bottom' ? 'flex-end' : 'center';
+}
+
+/** F5: distance (points, downward) from a row's TOP to the text BASELINE for the given alignment
+ * (PDF export). Middle keeps the historic cap-centred offset so existing output is unchanged; top
+ * seats the ascent just below the row top, bottom seats the descender just above the row bottom. */
+export function cellBaselineOffset(v: CellVAlign, rowHeight: number, fontSize: number): number {
+  const pad = Math.min(3, rowHeight * 0.12);
+  if (v === 'top') return pad + fontSize * 0.72;
+  if (v === 'bottom') return rowHeight - pad - fontSize * 0.28;
+  return rowHeight / 2 + fontSize * 0.34;
 }

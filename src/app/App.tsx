@@ -735,6 +735,31 @@ export function App() {
                 <input type="range" min={9} max={40} step={1} value={selTable.rowHeight}
                   onChange={(e) => { const rh = +e.target.value; patchTable(selTable.id, (t) => { t.rowHeight = rh; return t; }); }} style={{ width: '100%', accentColor: 'var(--accent)' }} />
               </label>
+              {(() => {
+                const editingRow = editingCell?.tableId === selTable.id ? editingCell.r : undefined;
+                return (
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                      יישור אנכי {editingRow != null ? `(שורה #${editingRow + 1})` : '(כל הטבלה)'}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {(['top', 'middle', 'bottom'] as const).map((v) => {
+                        const active = editingRow != null
+                          ? (selTable.rows[editingRow]?.vAlign ?? selTable.vAlign ?? 'middle') === v
+                          : (selTable.vAlign ?? 'middle') === v;
+                        const label = v === 'top' ? '⬆ עליון' : v === 'middle' ? '⬍ מרכז' : '⬇ תחתון';
+                        return (
+                          <button key={v} className={active ? 'btn btn-sm on' : 'btn btn-ghost btn-sm'} style={{ flex: 1 }}
+                            onClick={() => {
+                              if (editingRow != null) patchTable(selTable.id, (t) => { t.rows[editingRow] = { ...t.rows[editingRow], vAlign: v }; return t; });
+                              else patchBlock(selTable.id, { vAlign: v });
+                            }}>{label}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>רקע תאים (לכל הטבלה)</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>

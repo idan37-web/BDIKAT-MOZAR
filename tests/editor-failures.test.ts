@@ -131,3 +131,60 @@ describe('F4 — table detection: a faithful grid or clean text, never a broken 
       'a 4+ column trim comparison table must still be detected').toBe(true);
   }, 240_000);
 });
+
+describe('F5 — table cell vertical alignment (default middle; per-table + per-row control, editor==export)', () => {
+  type TableBlockIR = import('../src/types/catalog').TableBlockIR;
+  type CellVAlign = import('../src/types/catalog').CellVAlign;
+  const tallTable = (over: Partial<TableBlockIR> = {}, rowOver: Record<string, unknown> = {}): TableBlockIR => ({
+    id: 'tb', type: 'table', x: 40, y: 40, width: 200, height: 90, rotation: 0, zIndex: 1, source: 'original',
+    originalBBox: { x: 40, y: 40, width: 200, height: 90 },
+    columns: 2, colFractions: [0.6, 0.4], rowHeight: 90,
+    rows: [{ kind: 'data', cells: ['גובה', '159'], ...rowOver }],
+    fontFamily: 'sans-serif', fontSize: 12, color: '#111418', direction: 'rtl', ...over,
+  } as TableBlockIR);
+
+  const valueCellAlign = (t: TableBlockIR): string => {
+    const page: PageIR = { id: 'p', width: 600, height: 400, rotation: 0, blocks: [t] };
+    const host = renderPage(page);
+    const el = [...host.querySelectorAll('div')].filter((d) => d.textContent?.trim() === '159').pop() as HTMLElement;
+    expect(el, 'value cell 159 did not render').toBeTruthy();
+    return el.style.alignItems;
+  };
+
+  it('editor: default is middle; per-table vAlign and a per-row override both move the cell', () => {
+    expect(valueCellAlign(tallTable()), 'default must be middle (center)').toBe('center');
+    expect(valueCellAlign(tallTable({ vAlign: 'top' as CellVAlign })), 'per-table top').toBe('flex-start');
+    expect(valueCellAlign(tallTable({ vAlign: 'bottom' as CellVAlign })), 'per-table bottom').toBe('flex-end');
+    // a per-ROW vAlign overrides the per-table default
+    expect(valueCellAlign(tallTable({ vAlign: 'top' as CellVAlign }, { vAlign: 'bottom' })), 'per-row override wins').toBe('flex-end');
+  });
+
+  it('export: the drawn value baseline follows vAlign (top highest on the page, bottom lowest)', async () => {
+    const { readFileSync, writeFileSync, mkdtempSync } = await import('node:fs');
+    const { execFileSync } = await import('node:child_process');
+    const { tmpdir } = await import('node:os');
+    const { exportPdf } = await import('../src/pdf/exportPdf');
+    const fontBytes = new Uint8Array(readFileSync('src/assets/PeugeotNewHebrew-Regular.otf'));
+    const glyphY = async (v: CellVAlign): Promise<number> => {
+      const doc = { id: 'd', pages: [{ id: 'p', width: 600, height: 400, rotation: 0, blocks: [tallTable({ vAlign: v })] }] };
+      const pdf = await exportPdf(doc as never, fontBytes);
+      const dir = mkdtempSync(`${tmpdir()}/f5-`);
+      writeFileSync(`${dir}/e.pdf`, Buffer.from(pdf));
+      const out = execFileSync('python3', ['-c', `
+import fitz
+d=fitz.open('${dir}/e.pdf'); pg=d[0]; ys=[]
+for b in pg.get_text('rawdict')['blocks']:
+  for l in b.get('lines',[]):
+    for s in l.get('spans',[]):
+      for ch in s.get('chars',[]):
+        if ch['c'] in '159':
+          x0,y0,x1,y1=ch['bbox']; ys.append((y0+y1)/2)
+print(min(ys) if ys else -1)
+`]).toString();
+      return parseFloat(out.trim());
+    };
+    const yTop = await glyphY('top'), yMid = await glyphY('middle'), yBot = await glyphY('bottom');
+    expect(yTop, 'top glyph must sit above middle').toBeLessThan(yMid - 5);
+    expect(yBot, 'bottom glyph must sit below middle').toBeGreaterThan(yMid + 5);
+  }, 120_000);
+});
