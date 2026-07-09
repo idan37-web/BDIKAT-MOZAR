@@ -14,6 +14,7 @@ import { exportPdf } from '../pdf/exportPdf';
 import { saveProject } from '../store/library';
 import { removeBackground } from './imageBg';
 import { tintImage, bakeDocEdgeShades } from './imageFx';
+import { PrintRoute } from '../print/PrintRoute';
 
 const MODES: { id: ViewMode; label: string }[] = [
   { id: 'original', label: 'מקור' },
@@ -46,6 +47,14 @@ export function App() {
     });
   }, []);
   const resetHistory = (d: DocumentIR | null) => { pastRef.current = []; futureRef.current = []; lastPushRef.current = 0; setDocRaw(d); forceHist(); };
+
+  // #print hash ⇄ print-route state (pilot): shareable/bookmarkable, and Esc/back returns cleanly
+  const [printMode, setPrintMode] = React.useState(() => location.hash === '#print');
+  React.useEffect(() => {
+    const sync = () => setPrintMode(location.hash === '#print');
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
   const undo = React.useCallback(() => {
     if (!pastRef.current.length) return;
     setDocRaw((cur) => { if (cur) futureRef.current.push(cur); return pastRef.current.pop()!; });
@@ -205,6 +214,12 @@ export function App() {
   const fitScale = Math.min(1, 880 / page.width);
   const scale = fitScale * zoom;
   const brandFamily = bf ? `'${bf.family}', ${FALLBACK_HEBREW}` : FALLBACK_HEBREW;
+
+  // print route (#print, pilot): the same Block IR rendered through the dedicated print view —
+  // the browser handles bidi + layout; Ctrl/⌘+P (or the button) produces the print PDF.
+  if (printMode) {
+    return <PrintRoute doc={doc} fontFamily={brandFamily} onBack={() => { location.hash = ''; }} />;
+  }
   const selAny = page.blocks.find((b) => b.id === sel);
   const selBlock = selAny?.type === 'text' ? (selAny as TextBlockIR) : undefined;
   const selImage = selAny?.type === 'image' ? (selAny as ImageBlockIR) : undefined;
@@ -450,6 +465,7 @@ export function App() {
           {saveState === 'saving' ? 'שומר…' : saveState === 'saved' ? '✓ נשמר' : ''}
         </span>
         {exportErr && <span style={{ color: 'var(--danger)', fontSize: 12 }} title={exportErr}>שגיאת ייצוא</span>}
+        <button className="btn btn-ghost btn-sm" onClick={() => { location.hash = 'print'; }} title="תצוגת הדפסה (פיילוט) — Ctrl/⌘+P לייצוא PDF דרך הדפדפן" style={{ fontSize: 12 }}>🖨 הדפסה</button>
         <button className="btn btn-sm" onClick={handleExport} disabled={exporting}
           style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', opacity: exporting ? 0.6 : 1 }}>
           {exporting ? 'מייצא…' : 'ייצוא PDF'}

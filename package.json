@@ -24,7 +24,9 @@
     "verify:pwa": "vite build && node scripts/injectPrecache.mjs && node scripts/verifyPwa.mjs",
     "verify:engine": "tsx scripts/verifyEngine.mts",
     "test": "vitest run",
-    "build:single": "vitest run && tsc --noEmit && vite build --config vite.singlefile.config.ts"
+    "build:single": "vitest run && tsc --noEmit && vite build --config vite.singlefile.config.ts",
+    "export:print": "tsx scripts/export-print.mts",
+    "pilot:exporters": "tsx scripts/exporterPilot.mts"
   },
   "dependencies": {
     "@fontsource/heebo": "^5.2.8",

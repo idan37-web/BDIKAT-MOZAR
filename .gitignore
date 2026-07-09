@@ -22,3 +22,4 @@ e2e-out/
 
 # reference clones for consultation (playbook) — never bundled
 refs/
+_pilot/
