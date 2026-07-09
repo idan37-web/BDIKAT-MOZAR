@@ -241,3 +241,78 @@ print(json.dumps({'minx': min(xs) if xs else 999, 'n': n}))
     expect(n, 'the cell content must still be drawn, not entirely clipped away').toBeGreaterThan(3);
   }, 120_000);
 });
+
+describe('F7 — decorative vector graphics survive to export (shape blocks: chip + separator)', () => {
+  type ShapeBlockIR = import('../src/types/catalog').ShapeBlockIR;
+  async function importSpec() {
+    const { readFileSync } = await import('node:fs');
+    const { importPdf } = await import('../src/pdf/importPdf');
+    const b = readFileSync('tests/fixtures/c3-spec-page.pdf');
+    return importPdf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), 'c3-spec-page.pdf', { renderPreviews: false, reconstructTables: true });
+  }
+  function exportDrawings(pdfBytes: Uint8Array): Promise<{ x: number; y: number; w: number; h: number; fill: string | null }[]> {
+    return (async () => {
+      const { writeFileSync, mkdtempSync } = await import('node:fs');
+      const { execFileSync } = await import('node:child_process');
+      const { tmpdir } = await import('node:os');
+      const dir = mkdtempSync(`${tmpdir()}/f7-`);
+      writeFileSync(`${dir}/e.pdf`, Buffer.from(pdfBytes));
+      const out = execFileSync('python3', ['-c', `
+import fitz, json
+d=fitz.open('${dir}/e.pdf'); pg=d[0]; res=[]
+for dr in pg.get_drawings():
+  r=dr['rect']; f=dr.get('fill')
+  col='#%02x%02x%02x'%(int(f[0]*255),int(f[1]*255),int(f[2]*255)) if f else None
+  res.append({'x':round(r.x0,1),'y':round(r.y0,1),'w':round(r.width,1),'h':round(r.height,1),'fill':col})
+print(json.dumps(res))
+`]).toString();
+      return JSON.parse(out);
+    })();
+  }
+
+  it('the heading chip round-trips to the export within 1pt AND keeps its colour', async () => {
+    const { exportPdf } = await import('../src/pdf/exportPdf');
+    const { readFileSync } = await import('node:fs');
+    const doc = await importSpec();
+    const shapes = doc.pages[0].blocks.filter((b) => b.type === 'shape' || b.type === 'background') as ShapeBlockIR[];
+    // the heading chip = the widest coloured (non-white) fill bar behind a heading
+    const chip = shapes
+      .filter((s) => !s.line && s.width > 60 && s.height >= 6 && s.height <= 60 && (s.fill || '').toLowerCase() !== '#ffffff')
+      .sort((a, b) => b.width - a.width)[0];
+    expect(chip, 'the fixture must contain a decorative heading chip').toBeTruthy();
+
+    const fontBytes = new Uint8Array(readFileSync('src/assets/PeugeotNewHebrew-Regular.otf'));
+    const drawings = await exportDrawings(await exportPdf(doc, fontBytes));
+    const match = drawings.find((d) =>
+      Math.abs(d.x - chip.x) <= 1 && Math.abs(d.y - chip.y) <= 1 && Math.abs(d.w - chip.width) <= 1.5 && Math.abs(d.h - chip.height) <= 1.5);
+    expect(match, `heading chip (${chip.x},${chip.y} ${chip.width}x${chip.height}) missing from export`).toBeTruthy();
+    expect((match!.fill || '').toLowerCase(), 'chip colour must survive').toBe((chip.fill || '').toLowerCase());
+  }, 120_000);
+
+  it('a horizontal separator line is present in the export', async () => {
+    const { exportPdf } = await import('../src/pdf/exportPdf');
+    const { readFileSync } = await import('node:fs');
+    const doc = await importSpec();
+    const fontBytes = new Uint8Array(readFileSync('src/assets/PeugeotNewHebrew-Regular.otf'));
+    const drawings = await exportDrawings(await exportPdf(doc, fontBytes));
+    // a rule/separator: wide and thin
+    const seps = drawings.filter((d) => d.w > 100 && d.h <= 2);
+    expect(seps.length, 'at least one horizontal separator line must be drawn').toBeGreaterThan(0);
+  }, 120_000);
+
+  it('the editor renders decorative shape blocks (chip colour appears in the DOM)', async () => {
+    const doc = await importSpec();
+    const shapes = doc.pages[0].blocks.filter((b) => b.type === 'shape' || b.type === 'background') as ShapeBlockIR[];
+    const chip = shapes
+      .filter((s) => !s.line && s.width > 60 && s.height >= 6 && s.height <= 60 && (s.fill || '').toLowerCase() !== '#ffffff')
+      .sort((a, b) => b.width - a.width)[0];
+    const host = renderPage(doc.pages[0] as PageIR);
+    // the chip's fill colour must appear as a background somewhere in the rendered page
+    const rendered = [...host.querySelectorAll('div')].some((d) => {
+      const bg = (d.style.background || d.style.backgroundColor).replace(/\s/g, '');
+      const [r, g, b] = [1, 2, 3].map((k) => parseInt((chip.fill || '#000000').slice(1).slice((k - 1) * 2, k * 2), 16));
+      return bg.includes(chip.fill!.toLowerCase()) || bg.includes(`rgb(${r},${g},${b})`);
+    });
+    expect(rendered, 'the decorative chip must be painted in the editor').toBe(true);
+  }, 120_000);
+});
