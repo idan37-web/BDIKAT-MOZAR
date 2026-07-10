@@ -6,8 +6,18 @@
 //
 import { readFileSync, writeFileSync } from 'node:fs';
 import { importPdf } from '../src/pdf/importPdf';
-import { exportDocument, type ExporterKind } from '../src/print/exporters';
-import { detectBrand } from '../src/app/brandFont';
+import { exportDocument, DEFAULT_EXPORTER, type ExporterKind } from '../src/print/exporters';
+
+// inline brand detection: importing src/app/brandFont pulls its Vite `?url` asset imports, which
+// plain tsx/Node can't resolve. This mirrors brandFont.detectBrand for the fonts the CLI ships.
+function detectBrand(name: string): string {
+  const n = name.toLowerCase();
+  if (/peugeot|208|2008|3008|5008|rifter|boxer/.test(n)) return 'peugeot';
+  if (/citroen|citroën|c3|c4|c5|berlingo|jumpy/.test(n)) return 'citroen';
+  if (/opel|corsa|astra|mokka|grandland|crossland|combo|zafira|insignia|vivaro|frontera/.test(n)) return 'opel';
+  if (/\bmg\b/i.test(n)) return 'mg';
+  return 'unknown';
+}
 
 const BRAND_ASSETS: Record<string, { regular: string; bold?: string }> = {
   peugeot: { regular: 'src/assets/PeugeotNewHebrew-Regular.otf', bold: 'src/assets/PeugeotNewHebrew-Bold.otf' },
@@ -21,7 +31,7 @@ if (!input || !output) {
   console.error('usage: npx tsx scripts/export-print.mts <input.pdf> <output.pdf> [pdf-lib|html-print]');
   process.exit(2);
 }
-const kind = (kindArg || 'html-print') as ExporterKind;
+const kind = (kindArg as ExporterKind) || DEFAULT_EXPORTER;
 
 const b = readFileSync(input);
 const doc = await importPdf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), input.split('/').pop()!, {

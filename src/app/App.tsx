@@ -48,13 +48,16 @@ export function App() {
   }, []);
   const resetHistory = (d: DocumentIR | null) => { pastRef.current = []; futureRef.current = []; lastPushRef.current = 0; setDocRaw(d); forceHist(); };
 
-  // #print hash ⇄ print-route state (pilot): shareable/bookmarkable, and Esc/back returns cleanly
+  // #print hash ⇄ print-route state: the browser-print path is the DEFAULT export. `printAuto`
+  // marks arrival via "ייצוא PDF" (fire the print dialog); the 🖨 button opens a manual preview.
   const [printMode, setPrintMode] = React.useState(() => location.hash === '#print');
+  const [printAuto, setPrintAuto] = React.useState(false);
   React.useEffect(() => {
-    const sync = () => setPrintMode(location.hash === '#print');
+    const sync = () => { setPrintMode(location.hash === '#print'); if (location.hash !== '#print') setPrintAuto(false); };
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
   }, []);
+  const goPrint = (auto: boolean) => { setPrintAuto(auto); location.hash = 'print'; };
   const undo = React.useCallback(() => {
     if (!pastRef.current.length) return;
     setDocRaw((cur) => { if (cur) futureRef.current.push(cur); return pastRef.current.pop()!; });
@@ -218,7 +221,7 @@ export function App() {
   // print route (#print, pilot): the same Block IR rendered through the dedicated print view —
   // the browser handles bidi + layout; Ctrl/⌘+P (or the button) produces the print PDF.
   if (printMode) {
-    return <PrintRoute doc={doc} fontFamily={brandFamily} onBack={() => { location.hash = ''; }} />;
+    return <PrintRoute doc={doc} fontFamily={brandFamily} autoPrint={printAuto} onBack={() => { location.hash = ''; }} />;
   }
   const selAny = page.blocks.find((b) => b.id === sel);
   const selBlock = selAny?.type === 'text' ? (selAny as TextBlockIR) : undefined;
@@ -465,10 +468,13 @@ export function App() {
           {saveState === 'saving' ? 'שומר…' : saveState === 'saved' ? '✓ נשמר' : ''}
         </span>
         {exportErr && <span style={{ color: 'var(--danger)', fontSize: 12 }} title={exportErr}>שגיאת ייצוא</span>}
-        <button className="btn btn-ghost btn-sm" onClick={() => { location.hash = 'print'; }} title="תצוגת הדפסה (פיילוט) — Ctrl/⌘+P לייצוא PDF דרך הדפדפן" style={{ fontSize: 12 }}>🖨 הדפסה</button>
-        <button className="btn btn-sm" onClick={handleExport} disabled={exporting}
-          style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px', opacity: exporting ? 0.6 : 1 }}>
-          {exporting ? 'מייצא…' : 'ייצוא PDF'}
+        <button className="btn btn-ghost btn-sm" onClick={() => goPrint(false)} title="תצוגת הדפסה — Ctrl/⌘+P לייצוא PDF דרך הדפדפן" style={{ fontSize: 12 }}>🖨 תצוגה</button>
+        <button className="btn btn-ghost btn-sm" onClick={handleExport} disabled={exporting} title="ייצוא וקטורי חלופי (pdf-lib) — הורדה ישירה ללא חלון הדפסה" style={{ fontSize: 12, opacity: exporting ? 0.6 : 1 }}>
+          {exporting ? 'מייצא…' : 'ייצוא וקטורי'}
+        </button>
+        <button className="btn btn-sm" onClick={() => goPrint(true)} title="ייצוא PDF דרך מנוע ההדפסה של הדפדפן (ברירת מחדל)"
+          style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 14px' }}>
+          ייצוא PDF
         </button>
         {fromGen && <button className="btn btn-ghost btn-sm" onClick={() => { resetHistory(null); setFromGen(false); setScreen('generate'); }}>← חזרה ליצירה</button>}
         <button className="btn btn-ghost btn-sm" onClick={() => { setFromGen(false); resetHistory(null); }}>ייבוא אחר</button>

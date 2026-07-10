@@ -7,7 +7,11 @@ import { exportPdf } from '../pdf/exportPdf';
 
 export type ExporterKind = 'pdf-lib' | 'html-print';
 
-export const DEFAULT_EXPORTER: ExporterKind = 'pdf-lib';
+// The pilot judgment (docs/EXPORTER_PILOT.md) put html-print at functional parity with pdf-lib
+// (F2/F5/F6/F7 all green) and SSIM parity vs the editor, so it is now the DEFAULT. pdf-lib is
+// kept as an explicit fallback ('pdf-lib') — not deleted — for the single-file offline build,
+// which has no headless Chromium to drive the print path.
+export const DEFAULT_EXPORTER: ExporterKind = 'html-print';
 
 export interface ExportFonts { regular: Uint8Array; bold?: Uint8Array; family?: string }
 
