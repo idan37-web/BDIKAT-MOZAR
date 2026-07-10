@@ -26,7 +26,8 @@
     "test": "vitest run",
     "build:single": "vitest run && tsc --noEmit && vite build --config vite.singlefile.config.ts",
     "export:print": "tsx scripts/export-print.mts",
-    "pilot:exporters": "tsx scripts/exporterPilot.mts"
+    "pilot:exporters": "tsx scripts/exporterPilot.mts",
+    "judge:semantic": "tsx scripts/semanticJudge.mts"
   },
   "dependencies": {
     "@fontsource/heebo": "^5.2.8",
@@ -35,7 +36,8 @@
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@napi-rs/canvas": "^1.0.0",

@@ -12,6 +12,13 @@ import { saveTemplate } from '../store/library';
 import { blockScreenRect } from '../editor/coords';
 import { classifyWithGemini, applyAiToSpec } from '../ai/geminiClassify';
 import { getGeminiKey, setGeminiKey, getGeminiModel, setGeminiModel } from '../ai/settings';
+import { GeminiSemanticProvider, GEMINI_VISION_DEFAULT } from '../ai/geminiProvider';
+import { classifyDocument, applyTableRescue } from '../ai/semanticLayer';
+import { learnTemplateV2, KIND_TO_ROLE, ROLE_TO_PAGE_TYPE } from '../templates/synthesisV2';
+import { saveCorrection } from '../ai/corrections';
+import { buildCompactBlocks } from '../ai/payload';
+import type { PageSemantics, BlockRole, PageType } from '../ai/semanticSchema';
+import type { PageRole } from '../templates/templateSpec';
 import { naturalTemplateSheets, DRIVE_LABELS, type DriveType } from '../data/workbookAdapter';
 import { writeXlsx } from '../data/writeXlsx';
 import { GEMINI_MODELS } from '../ai/models';
@@ -56,6 +63,34 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
   const [aiBusy, setAiBusy] = React.useState(false);
   const [aiMsg, setAiMsg] = React.useState<string | null>(null);
   React.useEffect(() => { setAiKey(getGeminiKey()); setAiModel(getGeminiModel()); }, []);
+
+  // Semantic layer (contract): vision classifier → synthesis v2 → table rescue. The heuristic
+  // learner stays the default until the judge script says the AI path wins.
+  async function semanticLearn() {
+    if (!docs.length) return;
+    const key = aiKey.trim();
+    if (!key) { setAiMsg('הזן מפתח Gemini API (חינמי) כדי להפעיל.'); setAiOpen(true); return; }
+    setGeminiKey(key); setAiBusy(true);
+    try {
+      const provider = new GeminiSemanticProvider(key, GEMINI_VISION_DEFAULT);
+      const all: (PageSemantics | null)[][] = [];
+      for (let di = 0; di < docs.length; di++) {
+        setAiMsg(`מסווג עמודים (${di + 1}/${docs.length})…`);
+        all.push(await classifyDocument(docs[di], provider, {
+          onProgress: (done, total, note) => setAiMsg(`מסווג ${docs[di].sourcePdfName}: עמוד ${done}/${total} (${note})`),
+        }));
+      }
+      const ok = all.flat().filter(Boolean).length;
+      const spec = learnTemplateV2(docs, all);
+      setAiMsg(`מסווג: ${ok} עמודים סווגו. מנסה חילוץ טבלאות…`);
+      const rescue = await applyTableRescue(spec, docs[0], provider);
+      const rescued = rescue.reduce((s, r) => s + r.recovered, 0);
+      setTpl(spec); setSaved(false); setSelSlot(null); setSelSlots(new Set());
+      setAiMsg(`✓ למידה סמנטית: ${ok} עמודים סווגו · ${rescued} טבלאות חולצו. עברו על תור הביקורת (ביטחון עולה) ותקנו.`);
+    } catch (e) {
+      setAiMsg(`שגיאת סיווג: ${(e as Error).message}. התבנית ההיוריסטית נשמרה.`);
+    } finally { setAiBusy(false); }
+  }
 
   async function refineWithAi() {
     if (!tpl) return;
@@ -110,13 +145,37 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
 
   function patchSlots(ids: Set<string>, patch: Partial<SlotSpec>) {
     setSaved(false);
-    setTpl((t) => !t ? t : {
-      ...t,
-      pages: t.pages.map((p, i) => i !== curPage ? p : {
+    if (!tpl) return;
+    const next: TemplateSpec = {
+      ...tpl,
+      pages: tpl.pages.map((p, i) => i !== curPage ? p : {
         ...p,
         slots: p.slots.map((s) => ids.has(s.id) ? { ...s, ...patch } : s),
       }),
-    });
+    };
+    setTpl(next);
+    // contract §3: PERSIST every kind/variability correction per brand — the corrected page
+    // becomes a few-shot example for this brand's future classifier calls.
+    if (('kind' in patch || 'dynamic' in patch) && docs[0]?.fileHash) {
+      const p = next.pages[curPage];
+      const irPage = docs[0].pages[p.index];
+      const labelled = p.slots.filter((s) => s.srcIds?.length);
+      if (irPage && labelled.length) {
+        const labels: PageSemantics = {
+          pageType: (p.semType as PageType) || ROLE_TO_PAGE_TYPE[p.role as PageRole] || 'other',
+          blocks: labelled.flatMap((s) => (s.srcIds || []).map((id) => ({
+            id,
+            // the slot the user just re-kinded takes the NEW kind's role (their correction),
+            // untouched slots keep the model's role
+            role: ids.has(s.id) && 'kind' in patch ? KIND_TO_ROLE[s.kind] : ((s.semRole as BlockRole) || KIND_TO_ROLE[s.kind]),
+            variability: (s.dynamic ? 'variable' : 'fixed') as 'fixed' | 'variable',
+            confidence: 1,
+            reason: 'user corrected',
+          }))),
+        };
+        saveCorrection(next.brand, { fileHash: docs[0].fileHash, pageIndex: p.index, blocks: buildCompactBlocks(irPage), labels });
+      }
+    }
   }
   const patchSlot = (slotId: string, patch: Partial<SlotSpec>) => patchSlots(new Set([slotId]), patch);
   function removeSlots(ids: Set<string>) {
@@ -198,6 +257,7 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
           {tpl.brand} · {tpl.format} · {sum.pages} עמ׳ · {sum.dynamic} דינמי / {sum.fixed} קבוע · נלמד מ-{tpl.learnedFrom.length} קבצים
         </span>
         <div style={{ flex: 1 }} />
+        <button className="btn btn-ghost btn-sm" onClick={semanticLearn} disabled={aiBusy} title="שכבה סמנטית: סיווג ראייה לכל עמוד (עם תמונה) → סינתזת תבנית v2 → חילוץ טבלאות. דורש מפתח Gemini.">{aiBusy ? 'AI…' : '🧠 למידה סמנטית'}</button>
         <button className="btn btn-ghost btn-sm" onClick={refineWithAi} disabled={aiBusy} title="סיווג עמודים/סלוטים בעזרת Gemini (אופציונלי)">{aiBusy ? 'AI…' : '✨ שפר עם AI'}</button>
         <button className="btn btn-ghost btn-sm" onClick={() => setAiOpen((v) => !v)} title="הגדרות AI">⚙</button>
         <select className="btn btn-ghost btn-sm" value={drive} onChange={(e) => setDrive(e.target.value as DriveType)} title="סוג הנעה לתבנית הנתונים" style={{ padding: '6px 8px' }}>
@@ -278,9 +338,31 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
         <div style={{ width: 290, flexShrink: 0, borderInlineStart: '1px solid var(--line)', background: 'var(--surface-2)', padding: 16, overflowY: 'auto' }}>
           <div style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 10 }}>
             עמוד {curPage + 1} · <b>{ROLE_HE[page.role] || page.role}</b>
+            {page.semType && <span style={{ marginInlineStart: 6, fontSize: 10, padding: '1px 6px', borderRadius: 8, background: 'var(--accent-soft, #ffe9d6)', color: 'var(--accent)' }} dir="ltr">{page.semType}</span>}
             <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>{page.roleEvidence.join(' · ')}</div>
             <button className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => { const ids = page.slots.map((s) => s.id); setSelSlots(new Set(ids)); setSelSlot(ids[ids.length - 1] || null); }}>בחר את כל הסלוטים בעמוד</button>
           </div>
+          {/* contract §3: review queue ORDERED BY ASCENDING CONFIDENCE — the least certain first */}
+          {(() => {
+            const queue = tpl.pages
+              .flatMap((p, pi) => p.slots.filter((s) => !s.ignored).map((s) => ({ pi, s })))
+              .sort((a, b) => a.s.confidence - b.s.confidence)
+              .slice(0, 10);
+            if (!queue.length) return null;
+            return (
+              <div style={{ marginBottom: 12, border: '1px solid var(--line)', borderRadius: 8, background: 'var(--surface)', padding: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>תור ביקורת (ביטחון עולה)</div>
+                {queue.map(({ pi, s }) => (
+                  <button key={s.id} onClick={() => { setCurPage(pi); setSelSlot(s.id); setSelSlots(new Set([s.id])); }}
+                    style={{ display: 'flex', width: '100%', gap: 6, alignItems: 'center', padding: '3px 4px', fontSize: 11, cursor: 'pointer', background: s.id === selSlot ? 'var(--accent-soft, #ffe9d6)' : 'transparent', border: 'none', borderRadius: 5, textAlign: 'start' }}>
+                    <span style={{ fontVariantNumeric: 'tabular-nums', color: s.confidence < 0.5 ? 'var(--danger)' : 'var(--ink-3)', minWidth: 30 }} dir="ltr">{s.confidence.toFixed(2)}</span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
+                    <span style={{ color: 'var(--ink-3)' }}>עמ׳ {pi + 1}</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
           {selSlots.size > 1 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ fontWeight: 800 }}>{selSlots.size} סלוטים נבחרו</div>
@@ -332,6 +414,13 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
               <div style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--mono)' }} dir="ltr">
                 {sel.blockType} · conf {sel.confidence} · {sel.variants} variant(s) · {sel.crossDocEvidence ? 'cross-doc' : 'single-doc'}
               </div>
+              {sel.semRole && (
+                <div style={{ fontSize: 11.5, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: 8 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 2 }}>סיווג סמנטי</div>
+                  <div dir="ltr" style={{ fontFamily: 'var(--mono)' }}>{sel.semRole} · {(sel.semConfidence ?? 0).toFixed(2)}</div>
+                  {sel.semReason && <div style={{ color: 'var(--ink-3)', marginTop: 2 }}>{sel.semReason}</div>}
+                </div>
+              )}
               {sel.sample && (
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>דוגמה {sel.blockType === 'image' ? '(תמונה)' : ''}</div>

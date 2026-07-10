@@ -179,7 +179,7 @@ function mode<T>(xs: T[]): T {
  * Detect the tables on a dense page. Returns each table plus the cells it consumed, so the caller
  * can keep the remaining cells (headings, strays) as ordinary text regions.
  */
-export function detectTables(cells: TextBlockIR[], pageWidth: number, edges?: Edge[]): { tables: DetectedTable[]; used: Set<string> } {
+export function detectTables(cells: TextBlockIR[], pageWidth: number, edges?: Edge[]): { tables: DetectedTable[]; used: Set<string>; rejected: DetectedTable[] } {
   const raw = cells.filter((c) => c.rotation === 0 && !c.deleted && c.text.trim());
   // exclude page TITLES/headings — a table cell is body-sized; a big title (e.g. "מפרט טכני") sits
   // above the grid and must stay a separate heading slot, not be swallowed as a table section row.
@@ -192,6 +192,9 @@ export function detectTables(cells: TextBlockIR[], pageWidth: number, edges?: Ed
 
   const tables: DetectedTable[] = [];
   const used = new Set<string>();
+  // low-confidence candidates NOT emitted (degraded to text) — the AI table-rescue path may
+  // recover their LOGICAL structure and re-anchor it to these cells' measured boxes.
+  const rejected: DetectedTable[] = [];
 
   // STRATEGY A (playbook T2, pdfplumber "lines"): when the source drew RULING LINES, snap/join
   // them, intersect, and read the smallest-cell grid — exact rows × cols straight from the ink.
@@ -201,7 +204,7 @@ export function detectTables(cells: TextBlockIR[], pageWidth: number, edges?: Ed
       if (t && t.confidence >= CONFIDENCE_MIN) {
         tables.push(t);
         for (const id of t.consumedIds) used.add(id);
-      }
+      } else if (t) rejected.push(t);
     }
     flat = flat.filter((c) => !used.has(c.id));
   }
@@ -226,9 +229,9 @@ export function detectTables(cells: TextBlockIR[], pageWidth: number, edges?: Ed
     if (t.rows.length >= 3 && t.confidence >= CONFIDENCE_MIN && (t.columns >= 2 || (t.rows.length >= 6 && denseRows))) {
       tables.push(t);
       for (const id of t.consumedIds) used.add(id); // only cells in KEPT rows (trimmed strays stay text)
-    }
+    } else if (t.rows.length >= 3 && t.confidence < CONFIDENCE_MIN) rejected.push(t);
   }
-  return { tables, used };
+  return { tables, used, rejected };
 }
 
 /** Convert a Strategy-A grid into our RTL-logical DetectedTable (grid columns are left→right;

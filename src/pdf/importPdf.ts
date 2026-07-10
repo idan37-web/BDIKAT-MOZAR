@@ -40,6 +40,14 @@ export async function importPdf(
 ): Promise<DocumentIR> {
   const pdfjs = await loadPdfjs();
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  // fileHash = the semantic-classifier cache key. Computed BEFORE getDocument — pdf.js TRANSFERS
+  // the buffer to its worker, and a detached buffer cannot be hashed afterwards.
+  let fileHash: string | undefined;
+  try {
+    const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const digest = await crypto.subtle.digest('SHA-256', ab);
+    fileHash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch { fileHash = undefined; }
   const doc = await pdfjs.getDocument({ data: bytes, isEvalSupported: false, useSystemFonts: false }).promise;
 
   const pages: PageIR[] = [];
@@ -279,6 +287,7 @@ export async function importPdf(
     id: `doc_${Date.now()}`,
     sourcePdfName,
     brand,
+    fileHash,
     pages,
   };
 }

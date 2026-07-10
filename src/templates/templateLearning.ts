@@ -50,6 +50,9 @@ function gaps(a: BBox, b: BBox): { dx: number; dy: number } {
 export interface Region {
   blockType: 'text' | 'image' | 'shape' | 'table';
   bbox: BBox;
+  /** IR block ids merged into this region — the join key between the semantic classifier's
+   * per-block labels (which name EXTRACTOR ids) and the learner's regions. */
+  ids: string[];
   /** table regions only: the reconstructed grid. */
   table?: SlotTable;
   /** Concatenated LOGICAL text (text regions only). */
@@ -133,7 +136,7 @@ export function groupRegions(page: PageIR, grouping: GroupMode = 'para'): Region
   const tableBlocks = page.blocks.filter(isTableBlock);
   for (const tb of tableBlocks) {
     regions.push({
-      blockType: 'table', bbox: { x: tb.x, y: tb.y, width: tb.width, height: tb.height },
+      blockType: 'table', ids: [tb.id], bbox: { x: tb.x, y: tb.y, width: tb.width, height: tb.height },
       text: tb.rows.map((r) => r.cells.join(' ')).join('\n'),
       count: tb.rows.length, maxFont: tb.fontSize, medFont: tb.fontSize, weight: 400,
       color: tb.color, align: 'end', direction: 'rtl', fontFamily: tb.fontFamily,
@@ -145,7 +148,7 @@ export function groupRegions(page: PageIR, grouping: GroupMode = 'para'): Region
     const { tables, used } = detectTables(texts, page.width, pageEdges(page));
     for (const t of tables) {
       regions.push({
-        blockType: 'table', bbox: t.bbox, text: t.rows.map((r) => r.cells.join(' ')).join('\n'),
+        blockType: 'table', ids: texts.filter((c) => used.has(c.id)).filter((c) => c.x >= t.bbox.x - 2 && c.x + c.width <= t.bbox.x + t.bbox.width + 2 && c.y >= t.bbox.y - 2 && c.y + c.height <= t.bbox.y + t.bbox.height + 2).map((c) => c.id), bbox: t.bbox, text: t.rows.map((r) => r.cells.join(' ')).join('\n'),
         count: t.rows.length, maxFont: t.fontSize, medFont: t.fontSize, weight: 400,
         color: t.color, align: 'end', direction: 'rtl', fontFamily: t.fontFamily,
         table: { columns: t.columns, colFractions: t.colFractions, rows: t.rows, rowHeight: t.rowHeight, fontSize: t.fontSize, color: t.color, fontFamily: t.fontFamily },
@@ -187,6 +190,7 @@ export function groupRegions(page: PageIR, grouping: GroupMode = 'para'): Region
     const boxes = group.map((g) => ({ x: g.x, y: g.y, width: g.width, height: g.height }));
     regions.push({
       blockType: 'text',
+      ids: group.map((g) => g.id),
       bbox: union(boxes),
       text: regionText(group, rtl),
       count: group.length,
@@ -203,6 +207,7 @@ export function groupRegions(page: PageIR, grouping: GroupMode = 'para'): Region
   for (const img of images) {
     regions.push({
       blockType: 'image',
+      ids: [img.id],
       bbox: { x: img.x, y: img.y, width: img.width, height: img.height },
       text: '',
       count: 1,
@@ -220,6 +225,7 @@ export function groupRegions(page: PageIR, grouping: GroupMode = 'para'): Region
   for (const sh of page.blocks.filter(isShapeBlock)) {
     regions.push({
       blockType: 'shape',
+      ids: [sh.id],
       bbox: { x: sh.x, y: sh.y, width: sh.width, height: sh.height },
       text: '', count: 1, maxFont: 0, medFont: 0, weight: 400,
       color: sh.fill || '#000000', align: 'start', direction: 'ltr', fontFamily: '',
@@ -351,8 +357,9 @@ export function classifyPage(
  * Infer a slot's kind. CONTENT-FIRST: each region is classified by its OWN text/shape, so a
  * region's kind no longer just inherits the page role (the bug behind "spec table → marketing
  * text" and "equipment list → colours"). The page role is only a fallback for ambiguous regions.
+ * Exported for the semantic-judge script (the heuristic baseline in the comparison).
  */
-function slotKind(role: PageRole, r: Region, isLargestText: boolean, early = false, pageHeight = 0): SlotKind {
+export function slotKind(role: PageRole, r: Region, isLargestText: boolean, early = false, pageHeight = 0): SlotKind {
   if (r.blockType === 'shape') return 'background';
   if (r.blockType === 'image') {
     // a small image high on the page is almost always a brand logo, not a hero photo

@@ -93,6 +93,14 @@ export interface SlotSpec {
   crossDocEvidence: boolean;
   /** User marked this slot to be IGNORED — excluded from generation entirely. */
   ignored?: boolean;
+  /** Extractor block ids merged into this slot (v2) — the join key for correction few-shots. */
+  srcIds?: string[];
+  /** Semantic layer (additive): the classifier's BLOCK ROLE for this slot (contract enum). */
+  semRole?: string;
+  /** Semantic layer: the classifier's confidence 0..1 for that role. */
+  semConfidence?: number;
+  /** Semantic layer: the classifier's <=15-word reason. */
+  semReason?: string;
 }
 
 /** Fixed design furniture (panels + gridlines) emitted wholesale at generation — NOT
@@ -115,6 +123,8 @@ export interface TemplatePageSpec {
   slots: SlotSpec[];
   /** Fixed background design (panels + gridlines) reproduced at generation time. */
   design?: ShapeDesign[];
+  /** Semantic layer (additive): the classifier's PAGE TYPE (contract enum). */
+  semType?: string;
 }
 
 /** Brand-level style tokens. The accent colour is per-model → flagged dynamic. */

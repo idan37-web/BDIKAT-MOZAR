@@ -161,6 +161,8 @@ export interface DocumentIR {
   id: string;
   sourcePdfName?: string;
   brand?: string;          // detected from the source (drives the brand font)
+  /** SHA-256 of the source PDF bytes — cache key for the semantic classifier. */
+  fileHash?: string;
   pages: PageIR[];
 }
 
