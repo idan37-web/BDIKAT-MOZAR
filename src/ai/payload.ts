@@ -47,8 +47,9 @@ async function loadImg(dataUrl: string): Promise<HTMLImageElement> {
 }
 
 /** Downscale a rendered page (data URL) to a JPEG whose longest edge <=1400px; returns raw
- * base64 (no data: prefix). Browser-only (canvas); Node callers produce their own JPEG. */
-export async function toClassifierJpeg(dataUrl: string, maxEdge = 1400, quality = 0.8): Promise<string> {
+ * base64 (no data: prefix). Browser-only (canvas); Node callers produce their own JPEG.
+ * quality 0.72: classification (not print) — a lighter payload uploads measurably faster. */
+export async function toClassifierJpeg(dataUrl: string, maxEdge = 1400, quality = 0.72): Promise<string> {
   const img = await loadImg(dataUrl);
   const k = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight));
   const w = Math.max(1, Math.round(img.naturalWidth * k));

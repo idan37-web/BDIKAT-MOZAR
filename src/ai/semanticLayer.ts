@@ -18,40 +18,52 @@ export interface ClassifyDocOptions {
   onProgress?: (done: number, total: number, note: string) => void;
   /** override for tests / Node callers that render their own JPEG. */
   pageJpeg?: (pageIndex: number) => Promise<string>;
+  /** parallel in-flight classifier calls (default 4 — serial page-by-page was the "really slow"
+   * complaint; higher risks free-tier 429 storms, the transport's backoff absorbs the rest). */
+  concurrency?: number;
 }
 
-/** Classify every page of a document. Cached pages never re-bill; a failed page yields null
- * (that page keeps the heuristic path — graceful degradation, never a hard failure). */
+/** Classify every page of a document IN PARALLEL (bounded). Cached pages never re-bill; a failed
+ * page yields null (that page keeps the heuristic path — graceful degradation, never a hard
+ * failure). Result order always matches page order regardless of completion order. */
 export async function classifyDocument(
   doc: DocumentIR, provider: SemanticProvider, opts: ClassifyDocOptions = {},
 ): Promise<(PageSemantics | null)[]> {
-  const out: (PageSemantics | null)[] = [];
   const hash = doc.fileHash || doc.id;
-  for (let pi = 0; pi < doc.pages.length; pi++) {
-    const page = doc.pages[pi];
-    const cached = getCachedSemantics(hash, pi, opts.kv);
-    if (cached) { out.push(cached); opts.onProgress?.(pi + 1, doc.pages.length, 'cache'); continue; }
-    try {
-      const jpeg = opts.pageJpeg
-        ? await opts.pageJpeg(pi)
-        : page.previewImage ? await toClassifierJpeg(page.previewImage) : null;
-      if (!jpeg) { out.push(null); opts.onProgress?.(pi + 1, doc.pages.length, 'no render'); continue; }
-      const sem = await provider.classifyPage({
-        imageJpegBase64: jpeg,
-        blocks: buildCompactBlocks(page),
-        pageWidth: Math.round(page.width),
-        pageHeight: Math.round(page.height),
-        brand: doc.brand,
-        fewShot: fewShotFor(doc.brand || 'unknown', opts.kv),
-      });
-      setCachedSemantics(hash, pi, sem, opts.kv);
-      out.push(sem);
-      opts.onProgress?.(pi + 1, doc.pages.length, provider.name);
-    } catch (e) {
-      out.push(null);
-      opts.onProgress?.(pi + 1, doc.pages.length, `error: ${(e as Error).message.slice(0, 80)}`);
+  const total = doc.pages.length;
+  const out: (PageSemantics | null)[] = new Array(total).fill(null);
+  const fewShot = fewShotFor(doc.brand || 'unknown', opts.kv); // hoisted: same for every page
+  let done = 0;
+  const queue = doc.pages.map((_, pi) => pi);
+
+  const worker = async (): Promise<void> => {
+    for (let pi = queue.shift(); pi !== undefined; pi = queue.shift()) {
+      const page = doc.pages[pi];
+      const cached = getCachedSemantics(hash, pi, opts.kv);
+      if (cached) { out[pi] = cached; opts.onProgress?.(++done, total, 'cache'); continue; }
+      try {
+        const jpeg = opts.pageJpeg
+          ? await opts.pageJpeg(pi)
+          : page.previewImage ? await toClassifierJpeg(page.previewImage) : null;
+        if (!jpeg) { opts.onProgress?.(++done, total, 'no render'); continue; }
+        const sem = await provider.classifyPage({
+          imageJpegBase64: jpeg,
+          blocks: buildCompactBlocks(page),
+          pageWidth: Math.round(page.width),
+          pageHeight: Math.round(page.height),
+          brand: doc.brand,
+          fewShot,
+        });
+        setCachedSemantics(hash, pi, sem, opts.kv);
+        out[pi] = sem;
+        opts.onProgress?.(++done, total, provider.name);
+      } catch (e) {
+        opts.onProgress?.(++done, total, `error: ${(e as Error).message.slice(0, 80)}`);
+      }
     }
-  }
+  };
+  const n = Math.max(1, Math.min(opts.concurrency ?? 4, total));
+  await Promise.all(Array.from({ length: n }, worker));
   return out;
 }
 

@@ -72,12 +72,16 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
     if (!key) { setAiMsg('הזן מפתח Gemini API (חינמי) כדי להפעיל.'); setAiOpen(true); return; }
     setGeminiKey(key); setAiBusy(true);
     try {
-      const provider = new GeminiSemanticProvider(key, GEMINI_VISION_DEFAULT);
+      // the user's model pick applies (all Flash models are vision-capable); flash-lite is the
+      // fastest + highest free-tier quota. Pages are classified IN PARALLEL (bounded), so a
+      // 15-page doc costs ~4 round-trips of wall time instead of 15.
+      const provider = new GeminiSemanticProvider(key, aiModel || GEMINI_VISION_DEFAULT);
       const all: (PageSemantics | null)[][] = [];
       for (let di = 0; di < docs.length; di++) {
         setAiMsg(`מסווג עמודים (${di + 1}/${docs.length})…`);
         all.push(await classifyDocument(docs[di], provider, {
-          onProgress: (done, total, note) => setAiMsg(`מסווג ${docs[di].sourcePdfName}: עמוד ${done}/${total} (${note})`),
+          concurrency: 4,
+          onProgress: (done, total, note) => setAiMsg(`מסווג ${docs[di].sourcePdfName}: ${done}/${total} עמודים (${note})`),
         }));
       }
       const ok = all.flat().filter(Boolean).length;
@@ -285,7 +289,7 @@ export function TemplateScreen({ onBack, onGenerate }: { onBack: () => void; onG
                   {AI_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
               </label>
-              <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>נשמר מקומית; נשלח רק ל-Google בעת "שפר עם AI". 429? נסה flash-lite או המתן דקה.</span>
+              <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>נשמר מקומית; נשלח ל-Google רק בלחיצה על כפתורי ה-AI. איטי או 429? בחר flash-lite (המהיר ביותר, מכסה חינמית גבוהה). עמודים שסווגו נשמרים במטמון — ריצה חוזרת מיידית.</span>
             </>
           )}
           {aiMsg && <span style={{ fontSize: 12.5, color: aiMsg.startsWith('שגיאת') ? 'var(--danger)' : 'var(--ink-2)' }}>{aiMsg}</span>}

@@ -143,6 +143,40 @@ describe('table rescue — geometry recovered by aligning texts to extracted wor
   });
 });
 
+describe('classifyDocument — bounded parallelism (the "really slow" fix)', () => {
+  it('classifies pages in parallel (bounded), preserves order, and serves cached pages free', async () => {
+    const { classifyDocument } = await import('../src/ai/semanticLayer');
+    const { setCachedSemantics } = await import('../src/ai/semanticCache');
+    const kv = memKV();
+    const doc: DocumentIR = {
+      id: 'd', brand: 'citroen', fileHash: 'H',
+      pages: Array.from({ length: 8 }, (_, i) => pg(`p${i}`, [tb(`t${i}`, `עמוד ${i}`, 10, 10)])),
+    };
+    // page 2 pre-cached — must NOT hit the provider
+    setCachedSemantics('H', 2, { pageType: 'legal', blocks: [] }, kv);
+    let inFlight = 0, maxInFlight = 0;
+    const calls: number[] = [];
+    const provider = {
+      name: 'mock',
+      async classifyPage(input: { blocks: { id: string }[] }) {
+        inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 20));
+        inFlight--;
+        const n = Number(input.blocks[0].id.slice(1));
+        calls.push(n);
+        return { pageType: 'cover' as const, blocks: [] };
+      },
+    };
+    const out = await classifyDocument(doc, provider as never, { kv, concurrency: 4, pageJpeg: async () => 'x' });
+    expect(out.length).toBe(8);
+    expect(out[2]?.pageType, 'cached page served from cache').toBe('legal');
+    expect(calls.length, 'cached page must not re-bill').toBe(7);
+    expect(maxInFlight, 'must actually run in parallel').toBeGreaterThan(1);
+    expect(maxInFlight, 'must respect the concurrency bound').toBeLessThanOrEqual(4);
+    out.forEach((sem, i) => { if (i !== 2) expect(sem?.pageType).toBe('cover'); });
+  });
+});
+
 describe('page alignment by type — nth occurrence matching', () => {
   it('maps nth cover↔nth cover and falls back to index', () => {
     const map = alignPagesByType([
