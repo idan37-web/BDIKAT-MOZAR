@@ -35,3 +35,5 @@ HARD "DO NOT" LIST:
 
 START HERE to continue work: docs/PROGRESS.md (what's done, gotchas, how to continue).
 Full staged plan and prompts: docs/AutoSpec-directive.md · Domain findings + IR + roadmap: docs/AutoSpec-brief.md
+
+Rebuild plan: docs/REBUILD_BRIEF.md. Follow it end to end, running continuously through the stages, and pause only before a material change as defined in its Autonomy protocol section.
