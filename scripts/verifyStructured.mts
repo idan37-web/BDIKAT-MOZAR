@@ -1,0 +1,232 @@
+// Milestone D verification — structured-data ingestion.
+// Proves the REAL pipeline: SpecSheet → canonical CSV/TSV/XLSX → parse back (round-trip) →
+// map onto a learned TemplateSpec → DocumentIR with a sheet-driven spec table → auto-fit →
+// REAL vector PDF. Run: `npm run verify:structured`.
+import { readFileSync } from 'node:fs';
+import { deflateRawSync } from 'node:zlib';
+import { importPdf } from '../src/pdf/importPdf';
+import { learnTemplate } from '../src/templates/templateLearning';
+import { exportPdf, planTextLines } from '../src/pdf/exportPdf';
+import { isTableBlock, isTextBlock } from '../src/types/catalog';
+import type { DocumentIR } from '../src/types/catalog';
+import { peugeot3008Sheet } from '../src/data/samples';
+import { sheetStats } from '../src/data/specModel';
+import { sheetToCells, cellsToSheet, blankTemplateCells } from '../src/data/specSheetFormat';
+import { toCSV, parseDelimited, parseSpreadsheet, type Cells } from '../src/data/parseSheet';
+import { mapSheetToCatalog } from '../src/data/mapSheetToCatalog';
+
+const checks: { name: string; pass: boolean }[] = [];
+const expect = (name: string, pass: boolean) => checks.push({ name, pass });
+
+const imp = async (f: string): Promise<DocumentIR> => {
+  const b = readFileSync(f);
+  return importPdf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), f.split('/').pop()!, { renderPreviews: false });
+};
+
+// ---- minimal .xlsx writer (deflate-raw, shared strings) to exercise the real reader path ----
+function u16(n: number) { return Uint8Array.from([n & 255, (n >> 8) & 255]); }
+function u32(n: number) { return Uint8Array.from([n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255]); }
+function cat(parts: Uint8Array[]) { const len = parts.reduce((n, p) => n + p.length, 0); const out = new Uint8Array(len); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out; }
+function makeZip(files: { name: string; data: Uint8Array }[]): Uint8Array {
+  const enc = new TextEncoder();
+  const locals: Uint8Array[] = []; const centrals: Uint8Array[] = []; let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name);
+    const comp = deflateRawSync(f.data);
+    const local = cat([u32(0x04034b50), u16(20), u16(0), u16(8), u16(0), u16(0), u32(0), u32(comp.length), u32(f.data.length), u16(name.length), u16(0), name, comp]);
+    locals.push(local);
+    const central = cat([u32(0x02014b50), u16(20), u16(20), u16(0), u16(8), u16(0), u16(0), u32(0), u32(comp.length), u32(f.data.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), name]);
+    centrals.push(central);
+    offset += local.length;
+  }
+  const cd = cat(centrals); const cdOffset = offset;
+  const eocd = cat([u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(cd.length), u32(cdOffset), u16(0)]);
+  return cat([...locals, cd, eocd]);
+}
+function xmlEsc(s: string) { return s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]!)); }
+function cellsToXlsx(...sheets: Cells[]): Uint8Array {
+  const enc = new TextEncoder();
+  const uniq: string[] = []; const idx = new Map<string, number>();
+  const sid = (s: string) => { if (!idx.has(s)) { idx.set(s, uniq.length); uniq.push(s); } return idx.get(s)!; };
+  const col = (i: number) => { let s = ''; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
+  const sheetXml = (cells: Cells) => {
+    let rowsXml = '';
+    cells.forEach((row, r) => {
+      let cs = '';
+      row.forEach((v, c) => { if (v == null || v === '') return; cs += `<c r="${col(c)}${r + 1}" t="s"><v>${sid(v)}</v></c>`; });
+      rowsXml += `<row r="${r + 1}">${cs}</row>`;
+    });
+    return `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rowsXml}</sheetData></worksheet>`;
+  };
+  const sheetXmls = sheets.map(sheetXml);
+  const sst = `<?xml version="1.0" encoding="UTF-8"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${uniq.length}" uniqueCount="${uniq.length}">${uniq.map((s) => `<si><t xml:space="preserve">${xmlEsc(s)}</t></si>`).join('')}</sst>`;
+  const overrides = sheetXmls.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('');
+  const ct = `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${overrides}</Types>`;
+  return makeZip([
+    { name: '[Content_Types].xml', data: enc.encode(ct) },
+    { name: 'xl/sharedStrings.xml', data: enc.encode(sst) },
+    ...sheetXmls.map((x, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(x) })),
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// regression guard for the export doubling/overlap bug: a single-line box must NOT wrap (it
+// shrinks to fit instead); a tall box wraps. (See planTextLines.)
+{
+  const m = (t: string, s: number) => t.length * s * 0.6;
+  const long = 'המושבים הקדמיים ב-3008 החדש מתאפיינים בצורה דינמית ונעימה';
+  const one = planTextLines(long, 200, 12, 11, 1.2, m);
+  expect('single-line box never wraps (no overflow onto neighbour)', one.lines.length === 1);
+  expect('single-line overflowing text shrinks to fit', one.drawSize < 11 && one.drawSize >= 11 * 0.72);
+  const fits = planTextLines('קצר', 200, 12, 11, 1.2, m);
+  expect('single-line that fits keeps its size', fits.lines.length === 1 && fits.drawSize === 11);
+  const tall = planTextLines(long, 200, 60, 11, 1.2, m);
+  expect('tall box wraps to multiple lines', tall.lines.length > 1);
+}
+
+const sheet = peugeot3008Sheet();
+const stats = sheetStats(sheet);
+expect('sample sheet has real data', stats.rows >= 25 && stats.colors === 5 && stats.trims === 2);
+
+// 1) round-trip through canonical CSV
+const cells = sheetToCells(sheet);
+const csv = toCSV(cells);
+const back = cellsToSheet(parseDelimited(csv));
+const s2 = sheetStats(back.sheet);
+expect('CSV round-trip preserves trims', back.sheet.trims.join('|') === sheet.trims.join('|'));
+expect('CSV round-trip preserves spec rows', s2.rows === stats.rows);
+expect('CSV round-trip preserves values', s2.values === stats.values);
+expect('CSV round-trip preserves features', s2.features === stats.features);
+expect('CSV round-trip preserves colors+wheels', s2.colors === stats.colors && s2.wheels === stats.wheels);
+expect('CSV round-trip preserves model/brand', back.sheet.model === sheet.model && back.sheet.brand === sheet.brand);
+expect('CSV round-trip carries marketing/legal/price', !!back.sheet.marketingText && !!back.sheet.legalText && back.sheet.price === sheet.price);
+expect('CSV parse reports no issues on clean data', back.issues.length === 0);
+
+// 2) TSV (Excel often exports tab-delimited) parses identically
+const tsv = cells.map((r) => r.map((c) => (c ?? '').replace(/\t/g, ' ')).join('\t')).join('\n');
+const tBack = cellsToSheet(parseDelimited(tsv));
+expect('TSV round-trip preserves rows+values', sheetStats(tBack.sheet).rows === stats.rows && sheetStats(tBack.sheet).values === stats.values);
+
+// 3) real .xlsx (deflate + shared strings) parses back
+const xlsxBytes = cellsToXlsx(cells);
+const xCells = await parseSpreadsheet('data.xlsx', xlsxBytes);
+const xBack = cellsToSheet(xCells);
+expect('XLSX round-trip preserves rows', sheetStats(xBack.sheet).rows === stats.rows);
+expect('XLSX round-trip preserves values', sheetStats(xBack.sheet).values === stats.values);
+expect('XLSX round-trip preserves colors', sheetStats(xBack.sheet).colors === stats.colors);
+
+// 3b) MULTI-SHEET .xlsx: spec rows in sheet 1, equipment rows in a SEPARATE sheet → all read
+const specSheetCells: Cells = [['trims', 'GT', 'ALLURE'], ['spec', 'מנוע', 'נפח מנוע', 'סמ״ק', '1199', '1199']];
+const equipSheetCells: Cells = [['feature', 'אבזור', 'מסך מולטימדיה', '0', '1'], ['feature', 'בטיחות', '6 כריות אוויר', '1', '1']];
+const multi = cellsToXlsx(specSheetCells, equipSheetCells);
+const mBack = cellsToSheet(await parseSpreadsheet('multi.xlsx', multi));
+expect('multi-sheet xlsx: spec read from sheet 1', sheetStats(mBack.sheet).rows === 1);
+expect('multi-sheet xlsx: equipment read from sheet 2 (not ignored)', sheetStats(mBack.sheet).features === 2);
+
+// 3c) the downloadable template parses into every section, incl. interior colours
+const tmpl = cellsToSheet(blankTemplateCells(['GT', 'ALLURE'])).sheet;
+expect('template has spec + features', tmpl.sections.length >= 2 && tmpl.features.length >= 1);
+expect('template separates exterior/interior colours', tmpl.colors.some((c) => c.group === 'interior') && tmpl.colors.some((c) => c.group !== 'interior'));
+
+// 3d) NATURAL multi-sheet workbook (the user's real format: one tab per category, col A = label,
+// cols B+ = value per trim; safety/equipment tabs use V/X). Auto-detected vs the tagged format.
+{
+  const { parseToSpecSheet } = await import('../src/data/workbookAdapter');
+  const wb = [
+    { name: 'יחידת הנעה', cells: [['', 'GT', 'ALLURE'], ['נפח מנוע (סמ״ק)', '1199', '1199'], ['מספר בוכנות', '3', '3']] },
+    { name: 'מידות ומשקלים', cells: [['', 'GT', 'ALLURE'], ['אורך כללי (ס״מ)', '453.5', '453.5']] },
+    { name: 'בטיחות', cells: [['', 'V/X', 'V/X'], ['6 כריות אוויר', 'V', 'V'], ['ESP', 'V', 'X']] },
+    { name: 'אבזור', cells: [['', 'V/X', 'V/X'], ['מסך מולטימדיה', 'X', 'V']] },
+  ];
+  const r = parseToSpecSheet(wb);
+  expect('natural workbook auto-detected', r.format === 'natural');
+  expect('natural: tabs → spec sections', r.sheet.sections.some((s) => s.title === 'יחידת הנעה' && s.rows.some((row) => row.label === 'נפח מנוע' && row.unit === 'סמ״ק' && row.values[0] === '1199')));
+  expect('natural: safety/equipment tabs → feature lists with V/X', r.sheet.features.some((c) => c.title === 'בטיחות' && c.items.some((it) => it.label === 'ESP' && it.perTrim[0] === true && it.perTrim[1] === false)));
+  expect('natural: trim names read from header', r.sheet.trims.join('|') === 'GT|ALLURE');
+
+  // the downloadable natural template (writeXlsx) round-trips back through the reader
+  const { naturalTemplateSheets } = await import('../src/data/workbookAdapter');
+  const { writeXlsx } = await import('../src/data/writeXlsx');
+  const { parseXlsxSheets } = await import('../src/data/parseSheet');
+  const tplXlsx = writeXlsx(naturalTemplateSheets('phev', ['GT', 'ALLURE']));
+  expect('writeXlsx produces a PK zip', tplXlsx[0] === 0x50 && tplXlsx[1] === 0x4b);
+  const tplSheets = await parseXlsxSheets(tplXlsx);
+  expect('template xlsx keeps the 5 category tabs', tplSheets.length === 5 && tplSheets[0].name === 'יחידת הנעה');
+  const tplBack = parseToSpecSheet(tplSheets);
+  expect('template xlsx → natural with spec + features', tplBack.format === 'natural' && tplBack.sheet.sections.length === 3 && tplBack.sheet.features.length === 2);
+}
+
+// 4) issue surfacing: a malformed row is reported (not silently dropped)
+const dirty = parseDelimited('spec,מנוע\nbogusTag,x,y\ncolor,כחול,metallic,#0000ff');
+const dres = cellsToSheet(dirty);
+expect('unrecognised row surfaced as an issue', dres.issues.some((i) => /לא מזוהה/.test(i.message)));
+
+// 5) map onto a REAL learned template
+const doc3008 = await imp('project/uploads/PEUGEOT/PRIVATE/3008.pdf');
+// bold is resolved from the REAL font name (via commonObjs), not the internal loadedName
+{
+  const tb = doc3008.pages.flatMap((p) => p.blocks.filter(isTextBlock));
+  const bold = tb.filter((b) => b.fontWeight >= 700);
+  expect('bold headings detected on import', bold.length > 20);
+  expect('a known bold section header is bold', bold.some((b) => b.text.includes('מנוע בנזין') || b.text.includes('בטיחות')));
+  expect('real font family resolved (not loadedName)', tb.some((b) => /Peugeot/i.test(b.fontFamily)));
+}
+const tpl = learnTemplate([
+  doc3008,
+  await imp('project/uploads/PEUGEOT/PRIVATE/5008.pdf'),
+]);
+// Headless import carries no photos, so the learned template has no image slots. Inject a
+// dynamic hero-image slot to exercise the manual-fallback reporting path deterministically.
+tpl.pages[0].slots.push({
+  id: 'hero_test', key: 'p1.hero-test', kind: 'hero-image', blockType: 'image', dynamic: true,
+  bbox: { x: 40, y: 40, width: 220, height: 140 }, label: 'תמונת נושא ראשית',
+  confidence: 1, variants: 1, crossDocEvidence: false,
+});
+const fontBytes = new Uint8Array(readFileSync('src/assets/PeugeotNewHebrew-Regular.otf'));
+// a real measurer via the embedded font keeps auto-fit honest
+const { PDFDocument } = await import('pdf-lib');
+const fk = (await import('@pdf-lib/fontkit')).default;
+const probe = await PDFDocument.create(); probe.registerFontkit(fk);
+const probeFont = await probe.embedFont(fontBytes, { subset: false });
+const measure = (t: string, s: number) => probeFont.widthOfTextAtSize(t, s);
+
+const res = mapSheetToCatalog(tpl, sheet, { measure, title: 'בדיקת נתונים מובנים' });
+expect('catalog has one page per template page', res.doc.pages.length === tpl.pages.length);
+
+// spec is now a first-class editable TableBlockIR
+const tables = res.doc.pages.flatMap((p) => p.blocks.filter(isTableBlock));
+const tableText = tables.flatMap((t) => t.rows.flatMap((r) => r.cells)).join('|');
+expect('a TableBlockIR was generated for the spec', tables.length > 0);
+expect('spec value from sheet present (453.5)', tableText.includes('453.5'));
+expect('spec value from sheet present (1,199)', tableText.includes('1,199'));
+expect('trim header GT present in the table', tables.some((t) => t.rows[0]?.cells.includes('GT')));
+expect('section row rendered (מידות)', tables.some((t) => t.rows.some((r) => r.kind === 'section' && r.cells[0].includes('מידות'))));
+expect('table height matches rows*rowHeight', tables.every((t) => Math.abs(t.height - t.rows.length * t.rowHeight) < 0.5));
+
+// manual edit: change a cell value and add a row (the editor's add/remove path)
+const t0 = tables[0];
+const before = t0.rows.length;
+const dataRow = t0.rows.find((r) => r.kind === 'data')!;
+dataRow.cells[1] = '999';
+t0.rows.splice(t0.rows.length, 0, { kind: 'data', cells: new Array(t0.columns).fill('NEW') });
+t0.height = t0.rows.length * t0.rowHeight;
+expect('cell edit applied', t0.rows.find((r) => r.kind === 'data')!.cells[1] === '999');
+expect('row added', t0.rows.length === before + 1);
+
+expect('model-name mapped from sheet', res.mappings.some((m) => m.kind === 'model-name' && m.status === 'mapped'));
+expect('marketing-text mapped from sheet', res.mappings.some((m) => m.kind === 'marketing-text' && m.status === 'mapped'));
+expect('hero image surfaced for manual entry', res.manual.some((m) => m.kind === 'hero-image'));
+const specMapped = res.mappings.find((m) => m.kind === 'spec');
+expect('spec table reported as mapped', !!specMapped && specMapped.status === 'mapped');
+
+// 6) REAL vector export of the populated catalog
+const pdf = await exportPdf(res.doc, fontBytes);
+const header = String.fromCharCode(...pdf.slice(0, 5));
+expect('populated catalog exports to a real PDF', header === '%PDF-' && pdf.length > 5000);
+
+console.log(`sheet: ${stats.rows} rows · ${stats.values} values · ${stats.features} features · ${stats.colors} colors`);
+console.log(`mapped ${res.mappings.filter((m) => m.status === 'mapped').length} fields · ${res.manual.length} manual · ${res.warnings.length} warnings · PDF ${(pdf.length / 1024).toFixed(0)}KB`);
+let ok = true;
+for (const c of checks) { console.log(`${c.pass ? '✓' : '✗'} ${c.name}`); if (!c.pass) ok = false; }
+if (!ok) { console.error('VERIFY FAILED'); process.exit(1); }
+console.log('ALL STRUCTURED-DATA CHECKS PASSED');

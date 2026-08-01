@@ -1,0 +1,17 @@
+.cat-row { transition: border-color .14s, box-shadow .14s, transform .1s; }
+.cat-row:hover { border-color: var(--line-2); box-shadow: var(--sh); transform: translateY(-1px); }
+.brand-row:hover { background: var(--surface-3); }
+.tmpl-card { transition: box-shadow .16s, transform .12s; }
+.tmpl-card:hover { box-shadow: var(--sh-lg); transform: translateY(-2px); }
+.learn-card { transition: border-color .15s, background .15s, color .15s; }
+.learn-card:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.pick-card { transition: border-color .14s, box-shadow .14s, transform .1s; }
+.pick-card:hover { transform: translateY(-2px); box-shadow: var(--sh); }
+.menu-item { transition: background .12s; }
+.menu-item:hover { background: var(--surface-3); }
+.layer-row:hover { background: var(--surface-3) !important; }
+.tmpl-menu { opacity: 0; transition: opacity .14s; }
+.tmpl-card:hover .tmpl-menu { opacity: 1; }
+.txt-input { height: 40px; padding: 0 13px; border: 1px solid var(--line-2); border-radius: 10px; font-size: 14px; font-weight: 600; background: var(--surface); color: var(--ink); outline: none; transition: border-color .14s, box-shadow .14s; }
+.txt-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+select.txt-input { cursor: pointer; }

@@ -1,0 +1,415 @@
+// Stage 5 fix (image/text separation): walk the pdf.js operator list ONCE with a CTM
+// stack and resolve a CLEAN pixel source for every painted image — never the flattened
+// render-crop (which carries baked text). Resolution order per region:
+//   (i)  inline image data (paintInlineImageXObject — no string objId)
+//   (ii) named XObject from page.objs, resolved via the await/callback form (works even
+//        after the browser releases objects post-render — we read after getOperatorList)
+//   (iii) image-mask stencil -> RGBA
+// Image objects never contain text; overlapping text stays a separate block (paint order).
+type Mat = [number, number, number, number, number, number];
+const IDENT: Mat = [1, 0, 0, 1, 0, 0];
+
+function mul(a: Mat, b: Mat): Mat {
+  return [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]];
+}
+function apply(m: Mat, x: number, y: number): [number, number] { return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]; }
+
+export interface ImageOp {
+  opIndex: number;
+  bbox: { x: number; y: number; width: number; height: number }; // PDF points, top-left (VISIBLE region)
+  name?: string;     // named XObject objId
+  inline?: any;      // inline image object (paintInlineImageXObject)
+  mask?: boolean;    // paintImageMaskXObject (stencil)
+  hadSMask?: boolean;
+  /** Non-normal blend mode active when the image was painted (multiply/screen/…). A grayscale
+   * gradient painted with multiply/screen is a darken/lighten OVERLAY — decode converts its
+   * luminance to real alpha so it reproduces faithfully on any background. */
+  blend?: string;
+  /** Painted inside a Luminosity soft-mask group (these are the MASK's own pixels, not page
+   * content) or under an active gState SMask — importers must EXCLUDE these. */
+  masked?: boolean;
+  /** Source-fraction window actually visible when the source PDF clipped the image (0..1). */
+  crop?: { fx: number; fy: number; fw: number; fh: number };
+}
+
+/** A vector rectangle: a filled panel/strip, or a thin stroked line (table gridline). */
+export interface ShapeOp {
+  opIndex: number;
+  bbox: { x: number; y: number; width: number; height: number };
+  fill: string; // "#rrggbb"
+  line?: boolean; // true = a stroked rule/gridline (render as a thin rect of `fill`)
+  alpha?: number; // constant fill alpha (<1 = semi-transparent, e.g. a heading scrim)
+  /** Painted under an active soft mask / masked transparency group. The flat fill colour is NOT
+   * what the page shows (the mask makes it a gradient/shaped overlay we cannot reproduce) —
+   * importers must EXCLUDE these rather than render a solid block. */
+  masked?: boolean;
+  /** A near-full-page WHITE fill: the page background being re-painted. Not kept as a block,
+   * but it ERASES earlier shapes it covers (they are fully occluded in the source). */
+  bgWhite?: boolean;
+}
+
+/** A cluster of vector path ink (a logo, a QR/barcode, an icon row, a colour scale) that can't
+ * be reconstructed as primitives — it is rasterized from the page render into an image block. */
+export interface GraphicOp {
+  bbox: { x: number; y: number; width: number; height: number };
+  kind: 'logo' | 'qr' | 'scale' | 'graphic';
+  opCount: number;
+}
+
+/** The exact fill colour in force when a text run was shown, at its baseline origin
+ * (top-left, PDF points). getTextContent carries no colour; importers match these to the
+ * extracted text blocks to recover REAL colours — headless too (no raster needed). */
+export interface TextColorSpan { x: number; y: number; fill: string; }
+
+export interface PageOps { images: ImageOp[]; shapes: ShapeOp[]; graphics: GraphicOp[]; textColors: TextColorSpan[]; }
+
+export type MakeCanvas = (w: number, h: number) => HTMLCanvasElement;
+
+const toHex = (r: number, g: number, b: number) =>
+  '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+
+function cmykToRgb(c: number, m: number, y: number, k: number): [number, number, number] {
+  return [255 * (1 - c) * (1 - k), 255 * (1 - m) * (1 - k), 255 * (1 - y) * (1 - k)];
+}
+
+/**
+ * Single operator-list walk for import (hard rule): collects BOTH painted images and
+ * filled rectangles (design panels/strips) in one pass with a shared CTM stack. Shape
+ * colours come straight from the fill colour ops (no raster sampling needed).
+ */
+export async function walkPage(page: any, OPS: any, pageHeight: number, pageWidth = Infinity): Promise<PageOps> {
+  const ol = await page.getOperatorList();
+  const fns: number[] = ol.fnArray; const args: any[] = ol.argsArray;
+  let ctm: Mat = [...IDENT] as Mat; const stack: Mat[] = [];
+  // active clip rectangle in device space (y-up: [minX,minY,maxX,maxY]); tracked across save/restore
+  type Rect4 = { minX: number; minY: number; maxX: number; maxY: number };
+  let clip: Rect4 | null = null; const clipStack: (Rect4 | null)[] = [];
+  let pendingClip = false; // OPS.clip seen → apply current path as clip at the next endPath/paint
+  let smaskActive = false; const smaskStack: boolean[] = [];
+  let groupMaskDepth = 0; // depth of transparency groups that carry a soft mask
+  let fillAlpha = 1; const alphaStack: number[] = []; // constant fill alpha (gState 'ca')
+  let blendMode = 'normal'; const blendStack: string[] = []; // gState 'BM' (multiply/screen/…)
+  let fill = '#000000';
+  let strokeCol = '#000000';
+  let pathBox: number[] | null = null; // [minX,minY,maxX,maxY] in path space (constructPath args[2])
+  let pathCurves = 0;                  // bezier segments in the current path (logo detector)
+  // text state (for recovering each run's real colour) — reset by BT, unaffected by q/Q
+  let tm: Mat = [...IDENT] as Mat; let tlm: Mat = [...IDENT] as Mat; let leading = 0; let textRender = 0;
+  const translate = (tx: number, ty: number): Mat => [1, 0, 0, 1, tx, ty];
+  const images: ImageOp[] = [];
+  const shapes: ShapeOp[] = [];
+  const textColors: TextColorSpan[] = [];
+  const recordText = () => {
+    if (textRender === 3 || textRender === 7) return; // invisible text (OCR layer) — ignore
+    const m = mul(ctm, tm); // baseline origin = apply(m, 0, 0) = (m4, m5)
+    textColors.push({ x: m[4], y: pageHeight - m[5], fill });
+  };
+  // "graphic ink": small/curvy vector path boxes (top-left coords) → clustered into GraphicOps
+  const ink: { x: number; y: number; w: number; h: number; curves: number; colored: boolean }[] = [];
+  const isSat = (hex: string) => {
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex); if (!m) return false;
+    const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    return mx - mn > 40 && mx > 60; // a real colour (not gray/near-white/near-black)
+  };
+  const recordInk = (col: string) => {
+    if (!pathBox || pathBox.length !== 4) return;
+    const { minX, maxY, w, h } = xform(pathBox);
+    const maxDim = Math.max(w, h);
+    if (w <= 0 || h <= 0) return;
+    if (maxDim <= 130 || pathCurves >= 2) {
+      ink.push({ x: minX, y: pageHeight - maxY, w, h, curves: pathCurves, colored: isSat(col) });
+    }
+  };
+  const isXObj = (fn: number) => fn === OPS.paintImageXObject || fn === OPS.paintJpegXObject || fn === OPS.paintImageXObjectRepeat;
+  const isFill = (fn: number) => fn === OPS.fill || fn === OPS.eoFill;
+  const isStroke = (fn: number) => fn === OPS.stroke || fn === OPS.closeStroke;
+  const isFillStroke = (fn: number) => fn === OPS.fillStroke || fn === OPS.eoFillStroke || fn === OPS.closeFillStroke;
+
+  const xform = (box: number[]) => {
+    const [x0, y0] = apply(ctm, box[0], box[1]);
+    const [x1, y1] = apply(ctm, box[2], box[3]);
+    const minX = Math.min(x0, x1), maxX = Math.max(x0, x1), minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
+    return { minX, maxX, minY, maxY, w: maxX - minX, h: maxY - minY };
+  };
+  // when an OPS.clip was flagged, fold the current path's device rect into the active clip
+  const applyPendingClip = () => {
+    if (!pendingClip) return;
+    pendingClip = false;
+    if (!pathBox || pathBox.length !== 4) return;
+    const { minX, minY, maxX, maxY } = xform(pathBox);
+    const nc = { minX, minY, maxX, maxY };
+    clip = clip ? { minX: Math.max(clip.minX, nc.minX), minY: Math.max(clip.minY, nc.minY), maxX: Math.min(clip.maxX, nc.maxX), maxY: Math.min(clip.maxY, nc.maxY) } : nc;
+  };
+
+  for (let i = 0; i < fns.length; i++) {
+    const fn = fns[i], a = args[i];
+    if (fn === OPS.save) { stack.push([...ctm] as Mat); clipStack.push(clip); alphaStack.push(fillAlpha); smaskStack.push(smaskActive); blendStack.push(blendMode); }
+    else if (fn === OPS.restore) { if (stack.length) ctm = stack.pop() as Mat; if (clipStack.length) clip = clipStack.pop() as Rect4 | null; if (alphaStack.length) fillAlpha = alphaStack.pop()!; if (smaskStack.length) smaskActive = smaskStack.pop()!; if (blendStack.length) blendMode = blendStack.pop()!; }
+    else if (fn === OPS.clip || fn === OPS.eoClip) { pendingClip = true; }
+    else if (fn === OPS.transform) ctm = mul(ctm, a as Mat);
+    else if (fn === OPS.beginGroup) {
+      // a transparency group with a soft mask: everything painted inside is masked content
+      try { if ((a as any)?.[0]?.smask || (a as any)?.smask) groupMaskDepth++; } catch { /* ignore */ }
+    }
+    else if (fn === OPS.endGroup) { if (groupMaskDepth > 0) groupMaskDepth--; }
+    else if (fn === OPS.setGState) {
+      try {
+        // gState arg is a list of [key, value] entries. 'ca' = constant fill alpha;
+        // 'SMask' = soft mask (null / 'None' / falsy clears it — the old string test
+        // never matched pdf.js's `null`, so smaskActive used to LEAK to page end).
+        let entries: any[] = Array.isArray(a) ? (a as any[]) : [];
+        if (entries.length === 1 && Array.isArray(entries[0]) && Array.isArray(entries[0][0])) entries = entries[0];
+        for (const e of entries) {
+          if (!Array.isArray(e)) continue;
+          if (e[0] === 'ca' && typeof e[1] === 'number') fillAlpha = e[1];
+          if (e[0] === 'SMask') smaskActive = !!e[1] && e[1] !== 'None';
+          if (e[0] === 'BM') { const v: any = e[1]; blendMode = String(v?.name ?? v ?? 'normal').toLowerCase(); }
+        }
+      } catch { /* ignore */ }
+    }
+    // --- text matrix state (for per-run colour) ---
+    else if (fn === OPS.beginText) { tm = [...IDENT] as Mat; tlm = [...IDENT] as Mat; }
+    else if (fn === OPS.setTextMatrix) { tm = [...(a as Mat)] as Mat; tlm = [...(a as Mat)] as Mat; }
+    else if (fn === OPS.setLeading) { leading = (a as number[])[0]; }
+    else if (fn === OPS.setTextRenderingMode) { textRender = (a as number[])[0]; }
+    else if (fn === OPS.moveText) { const [tx, ty] = a as number[]; tlm = mul(tlm, translate(tx, ty)); tm = [...tlm] as Mat; }
+    else if (fn === OPS.setLeadingMoveText) { const [tx, ty] = a as number[]; leading = -ty; tlm = mul(tlm, translate(tx, ty)); tm = [...tlm] as Mat; }
+    else if (fn === OPS.nextLine) { tlm = mul(tlm, translate(0, -leading)); tm = [...tlm] as Mat; }
+    else if (fn === OPS.showText || fn === OPS.showSpacedText) { recordText(); }
+    else if (fn === OPS.nextLineShowText || fn === OPS.nextLineSetSpacingShowText) { tlm = mul(tlm, translate(0, -leading)); tm = [...tlm] as Mat; recordText(); }
+    else if (fn === OPS.setFillRGBColor) { const c = a as number[]; fill = toHex(c[0], c[1], c[2]); }
+    else if (fn === OPS.setFillGray) { const g = (a as number[])[0]; const v = g <= 1 ? g * 255 : g; fill = toHex(v, v, v); }
+    else if (fn === OPS.setFillCMYKColor) { const [c, m, y, k] = a as number[]; const [r, g, b] = cmykToRgb(c, m, y, k); fill = toHex(r, g, b); }
+    else if (fn === OPS.setStrokeRGBColor) { const c = a as number[]; strokeCol = toHex(c[0], c[1], c[2]); }
+    else if (fn === OPS.setStrokeGray) { const g = (a as number[])[0]; const v = g <= 1 ? g * 255 : g; strokeCol = toHex(v, v, v); }
+    else if (fn === OPS.setStrokeCMYKColor) { const [c, m, y, k] = a as number[]; const [r, g, b] = cmykToRgb(c, m, y, k); strokeCol = toHex(r, g, b); }
+    else if (fn === OPS.constructPath) {
+      pathBox = Array.isArray(a) ? (a[2] as number[]) : null;
+      const pops: number[] = Array.isArray(a) ? (a[0] as number[]) : [];
+      pathCurves = pops.reduce((n, o) => n + (o === OPS.curveTo || o === OPS.curveTo2 || o === OPS.curveTo3 ? 1 : 0), 0);
+    }
+    else if (isFill(fn) || isFillStroke(fn)) {
+      if (pathBox && pathBox.length === 4) {
+        let { minX, maxY, w, h } = xform(pathBox);
+        // honour the ACTIVE CLIP: the source only shows the clipped part of a fill (an unclipped
+        // capture painted e.g. a black header bar that is invisible in the original)
+        if (clip) {
+          const minY0 = maxY - h;
+          const ix0 = Math.max(minX, clip.minX), iy0 = Math.max(minY0, clip.minY);
+          const ix1 = Math.min(minX + w, clip.maxX), iy1 = Math.min(maxY, clip.maxY);
+          if (ix1 - ix0 < 2 || iy1 - iy0 < 2) { recordInk(fill); pathBox = null; pathCurves = 0; continue; }
+          minX = ix0; maxY = iy1; w = ix1 - ix0; h = iy1 - iy0;
+        }
+        // significant panels. WHITE is usually the page background (skip), EXCEPT (a) a clearly
+        // bounded white card (≥60×30, not near-full-page) — real panels the layout sits on — or
+        // (b) a white fill painted ON TOP of an earlier coloured fill it overlaps: an OCCLUDER
+        // (e.g. white row-fills over a section-highlight band; dropping them smeared the band
+        // over the whole table in the editor — the "yellow bleed" bug).
+        const isWhite = fill.toLowerCase() === '#ffffff';
+        const nearFull = w >= 0.9 * pageWidth && h >= 0.9 * pageHeight;
+        const x0 = Math.round(minX), y0 = Math.round(pageHeight - maxY), w0 = Math.round(w), h0 = Math.round(h);
+        const occludes = isWhite && !nearFull && shapes.some((s) => {
+          if (s.bgWhite || s.line || s.fill.toLowerCase() === '#ffffff') return false;
+          const ix = Math.max(0, Math.min(x0 + w0, s.bbox.x + s.bbox.width) - Math.max(x0, s.bbox.x));
+          const iy = Math.max(0, Math.min(y0 + h0, s.bbox.y + s.bbox.height) - Math.max(y0, s.bbox.y));
+          return ix * iy > w0 * h0 * 0.5; // covers mostly-inside an earlier coloured panel
+        });
+        if (w >= 24 && h >= 10 && (!isWhite || occludes || (w >= 60 && h >= 30 && !nearFull))) {
+          shapes.push({ opIndex: i, fill, alpha: fillAlpha < 1 ? fillAlpha : undefined, masked: smaskActive || groupMaskDepth > 0 || undefined, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
+        } else if (isWhite && nearFull && fillAlpha >= 1 && !smaskActive && groupMaskDepth === 0) {
+          // page background re-painted white: record as an ERASER of earlier covered shapes
+          shapes.push({ opIndex: i, fill, bgWhite: true, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) } });
+        }
+        recordInk(fill);
+      }
+      pathBox = null; pathCurves = 0;
+    } else if (isStroke(fn)) {
+      if (pathBox && pathBox.length === 4) {
+        let { minX, maxY, w, h } = xform(pathBox);
+        if (clip) { // honour the active clip (same as fills)
+          const minY0 = maxY - h;
+          const ix0 = Math.max(minX, clip.minX), iy0 = Math.max(minY0, clip.minY);
+          const ix1 = Math.min(minX + w, clip.maxX), iy1 = Math.min(maxY, clip.maxY);
+          if (ix1 - ix0 < 1 || iy1 - iy0 < 1) { recordInk(strokeCol); pathBox = null; pathCurves = 0; continue; }
+          minX = ix0; maxY = iy1; w = ix1 - ix0; h = iy1 - iy0;
+        }
+        // thin long stroke = a table rule / gridline → a thin rect of the stroke colour
+        const thin = Math.min(w, h) <= 2.5;
+        const long = Math.max(w, h) >= 8;
+        if (thin && long) {
+          shapes.push({ opIndex: i, fill: strokeCol, line: true, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)) } });
+        } else if (!thin && w >= 24 && h >= 10) {
+          // a stroked rectangle outline (kept as a faint panel border via the line colour)
+          shapes.push({ opIndex: i, fill: strokeCol, line: true, bbox: { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: 1 } });
+        }
+        recordInk(strokeCol);
+      }
+      applyPendingClip();
+      pathBox = null; pathCurves = 0;
+    } else if (fn === OPS.endPath) { applyPendingClip(); pathBox = null; pathCurves = 0; }
+    // NOTE: OPS.shadingFill (gradient) is deliberately NOT captured. A flat approximation of a
+    // gradient scrim renders as a solid bar that ruins the page; readability scrims are the
+    // user's call via the editor's manual scrim tool.
+    else if (isXObj(fn) || fn === OPS.paintInlineImageXObject || fn === OPS.paintImageMaskXObject) {
+      const pts = [apply(ctm, 0, 0), apply(ctm, 1, 0), apply(ctm, 1, 1), apply(ctm, 0, 1)];
+      const xs = pts.map((p) => p[0]); const ys = pts.map((p) => p[1]);
+      const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+      const w = maxX - minX, h = maxY - minY;
+      if (w < 10 || h < 10) continue; // keep small icons (was 20); tiny noise still excluded
+      let bbox = { x: Math.round(minX), y: Math.round(pageHeight - maxY), width: Math.round(w), height: Math.round(h) };
+      // If the source PDF clipped this image to a smaller window, record the VISIBLE region as the
+      // box plus a source-fraction crop, so the editor/export show it exactly as the original did.
+      let crop: ImageOp['crop'];
+      if (clip) {
+        const ix0 = Math.max(minX, clip.minX), iy0 = Math.max(minY, clip.minY);
+        const ix1 = Math.min(maxX, clip.maxX), iy1 = Math.min(maxY, clip.maxY);
+        const vw = ix1 - ix0, vh = iy1 - iy0;
+        const visFrac = (vw * vh) / (w * h);
+        if (vw > 4 && vh > 4 && visFrac > 0.05 && visFrac < 0.92) {
+          crop = { fx: (ix0 - minX) / w, fy: (maxY - iy1) / h, fw: vw / w, fh: vh / h };
+          bbox = { x: Math.round(ix0), y: Math.round(pageHeight - iy1), width: Math.round(vw), height: Math.round(vh) };
+        }
+      }
+      const blend = blendMode !== 'normal' && blendMode !== 'source-over' ? blendMode : undefined;
+      const masked = (groupMaskDepth > 0 || smaskActive) || undefined;
+      if (fn === OPS.paintInlineImageXObject) images.push({ opIndex: i, bbox, inline: a?.[0], hadSMask: smaskActive, blend, masked, crop });
+      else if (fn === OPS.paintImageMaskXObject) images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, mask: true, hadSMask: smaskActive, blend, masked, crop });
+      else images.push({ opIndex: i, bbox, name: Array.isArray(a) && typeof a[0] === 'string' ? a[0] : undefined, hadSMask: smaskActive, blend, masked, crop });
+    }
+  }
+  return { images, shapes, graphics: clusterGraphics(ink), textColors };
+}
+
+type Ink = { x: number; y: number; w: number; h: number; curves: number; colored: boolean };
+
+/** Cluster nearby graphic ink into logo / qr / colour-scale / generic graphic regions. */
+function clusterGraphics(ink: Ink[]): GraphicOp[] {
+  if (!ink.length) return [];
+  const parent = ink.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const join = (i: number, j: number) => { parent[find(i)] = find(j); };
+  const near = (a: Ink, b: Ink) => {
+    const dx = Math.max(0, Math.max(a.x, b.x) - Math.min(a.x + a.w, b.x + b.w));
+    const dy = Math.max(0, Math.max(a.y, b.y) - Math.min(a.y + a.h, b.y + b.h));
+    return dx <= 14 && dy <= 14;
+  };
+  for (let i = 0; i < ink.length; i++) for (let j = i + 1; j < ink.length; j++) if (near(ink[i], ink[j])) join(i, j);
+  const groups = new Map<number, number[]>();
+  ink.forEach((_, i) => { const r = find(i); (groups.get(r) || groups.set(r, []).get(r)!).push(i); });
+  const out: GraphicOp[] = [];
+  for (const idxs of groups.values()) {
+    const bs = idxs.map((k) => ink[k]);
+    const x0 = Math.min(...bs.map((b) => b.x)), y0 = Math.min(...bs.map((b) => b.y));
+    const x1 = Math.max(...bs.map((b) => b.x + b.w)), y1 = Math.max(...bs.map((b) => b.y + b.h));
+    const w = x1 - x0, h = y1 - y0;
+    const count = bs.length;
+    const curves = bs.reduce((n, b) => n + b.curves, 0);
+    const colored = bs.filter((b) => b.colored).length;
+    const tiny = bs.filter((b) => Math.max(b.w, b.h) <= 20).length;
+    if (count < 4 || w < 8 || h < 8 || w > 520 || h > 520) continue; // stray paths / full-page washes out
+    let kind: GraphicOp['kind'] | null = null;
+    if (tiny >= 25 && w < 240 && h < 240 && Math.abs(w - h) < Math.max(w, h) * 0.6) kind = 'qr';
+    else if (colored >= 3 && w > h * 1.6) kind = 'scale';
+    else if (curves >= 8) kind = 'logo';
+    // Only emit clearly-identified graphics (logo/qr/scale). A generic cluster is most likely a
+    // table's gridlines or stray rules — rasterizing those would bake a black-looking grid.
+    if (!kind) continue;
+    out.push({ bbox: { x: Math.round(x0), y: Math.round(y0), width: Math.round(w), height: Math.round(h) }, kind, opCount: count });
+  }
+  return out.sort((a, b) => b.bbox.width * b.bbox.height - a.bbox.width * a.bbox.height).slice(0, 12);
+}
+
+/** Back-compat thin wrapper (image-only callers). */
+export async function walkPageImages(page: any, OPS: any, pageHeight: number): Promise<ImageOp[]> {
+  return (await walkPage(page, OPS, pageHeight)).images;
+}
+
+function getObj(page: any, name: string): Promise<any> {
+  return new Promise((resolve) => {
+    let done = false;
+    try {
+      if (page.objs.has(name)) { resolve(page.objs.get(name)); return; }
+      page.objs.get(name, (o: any) => { done = true; resolve(o); });
+    } catch { resolve(null); return; }
+    setTimeout(() => { if (!done) resolve(null); }, 4000);
+  });
+}
+
+export function objToDataUrl(o: any, makeCanvas: MakeCanvas, blend?: string): string | null {
+  if (!o) return null;
+  const bmp = o.bitmap ?? (typeof ImageBitmap !== 'undefined' && o instanceof ImageBitmap ? o : null);
+  const W = o.width ?? bmp?.width; const H = o.height ?? bmp?.height;
+  if (!W || !H) return null;
+  const c = makeCanvas(W, H); const ctx = c.getContext('2d'); if (!ctx) return null;
+  let hasAlpha = false;
+  if (bmp) {
+    ctx.drawImage(bmp, 0, 0);
+    // CRITICAL: in the browser pdf.js hands us an ImageBitmap (this branch). We MUST detect
+    // transparency here — otherwise an SMasked swatch (transparent background) gets saved as
+    // opaque JPEG and its transparent areas turn BLACK. Read the pixels back to check alpha.
+    try {
+      const data = ctx.getImageData(0, 0, W, H).data;
+      for (let q = 3; q < data.length; q += 4) { if (data[q] < 255) { hasAlpha = true; break; } }
+    } catch { hasAlpha = true; /* if we can't sample, keep PNG (lossless, preserves alpha) */ }
+  } else if (o.data) {
+    const d: Uint8ClampedArray = o.data; const rgba = new Uint8ClampedArray(W * H * 4);
+    if (d.length === W * H * 4) { rgba.set(d); for (let q = 3; q < rgba.length; q += 4) if (rgba[q] < 255) { hasAlpha = true; break; } }
+    else if (d.length === W * H * 3) { for (let p = 0, q = 0; p < d.length; p += 3, q += 4) { rgba[q] = d[p]; rgba[q + 1] = d[p + 1]; rgba[q + 2] = d[p + 2]; rgba[q + 3] = 255; } }
+    else if (d.length === W * H) { for (let p = 0, q = 0; p < d.length; p++, q += 4) { rgba[q] = rgba[q + 1] = rgba[q + 2] = d[p]; rgba[q + 3] = 255; } }
+    else return null;
+    ctx.putImageData(new ImageData(rgba, W, H), 0, 0);
+  } else return null;
+
+  // BLEND-MODE OVERLAY RECONSTRUCTION: a grayscale image painted with multiply/darken (or
+  // screen/lighten) is a darken(/lighten) overlay — canvas/pdf-lib can't replay the blend, so an
+  // opaque decode paints a solid gradient BAR over the photo. Convert luminance to real alpha:
+  //   multiply: out = black  @ alpha 1-lum   (white → invisible, black → dark)
+  //   screen:   out = white  @ alpha lum     (black → invisible, white → light)
+  // Faithful on any background. Applied only to near-grayscale opaque pixels (photos untouched).
+  const mode = (blend || '').toLowerCase();
+  const darkening = mode === 'multiply' || mode === 'darken';
+  const lightening = mode === 'screen' || mode === 'lighten';
+  if ((darkening || lightening) && !hasAlpha) {
+    try {
+      const img = ctx.getImageData(0, 0, W, H);
+      const d = img.data;
+      // near-grayscale check on a sample grid
+      let maxSpread = 0;
+      for (let q = 0; q < d.length; q += 4 * 97) {
+        const spread = Math.max(d[q], d[q + 1], d[q + 2]) - Math.min(d[q], d[q + 1], d[q + 2]);
+        if (spread > maxSpread) maxSpread = spread;
+      }
+      if (maxSpread <= 24) {
+        for (let q = 0; q < d.length; q += 4) {
+          const lum = (d[q] * 77 + d[q + 1] * 150 + d[q + 2] * 29) >> 8;
+          if (darkening) { d[q] = d[q + 1] = d[q + 2] = 0; d[q + 3] = 255 - lum; }
+          else { d[q] = d[q + 1] = d[q + 2] = 255; d[q + 3] = lum; }
+        }
+        ctx.putImageData(img, 0, 0);
+        hasAlpha = true;
+      }
+    } catch { /* leave as decoded */ }
+  }
+
+  // keep transparency as PNG; opaque photos as smaller JPEG
+  return c.toDataURL(hasAlpha ? 'image/png' : 'image/jpeg', 0.85);
+}
+
+/** Resolve a clean pixel source (data URL) for an image op, or null if impossible. */
+export async function resolveImage(page: any, op: ImageOp, makeCanvas: MakeCanvas): Promise<string | null> {
+  // (i) inline image
+  if (op.inline) {
+    const o = op.inline;
+    const norm = o.bitmap || o.data ? o : (o.width && o.height ? o : null);
+    const url = objToDataUrl(norm, makeCanvas, op.blend);
+    if (url) return url;
+  }
+  // (ii)/(iii) named XObject or mask
+  if (op.name) {
+    const o = await getObj(page, op.name);
+    const url = objToDataUrl(o, makeCanvas, op.blend);
+    if (url) return url;
+  }
+  return null;
+}
